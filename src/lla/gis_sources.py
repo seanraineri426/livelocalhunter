@@ -24,6 +24,23 @@ class ParcelSource:
     notes: str = ""
 
 
+@dataclass(frozen=True)
+class ZoningSource:
+    county_key: str
+    county_fips: str
+    name: str
+    url: str
+    where: str
+    id_field: str
+    order_by: str
+    municipality_field: str
+    zone_field: str
+    general_use_field: str
+    description_field: str
+    out_fields: tuple[str, ...]
+    notes: str = ""
+
+
 PARCEL_SOURCES: dict[str, ParcelSource] = {
     "miami_dade": ParcelSource(
         county_key="miami_dade",
@@ -95,9 +112,40 @@ PARCEL_SOURCES: dict[str, ParcelSource] = {
 }
 
 
+ZONING_SOURCES: dict[str, ZoningSource] = {
+    "miami_dade": ZoningSource(
+        county_key="miami_dade",
+        county_fips="12086",
+        name="Miami-Dade Municipal Zoning (MD_LandInformation/19)",
+        url="https://gisweb.miamidade.gov/arcgis/rest/services/MD_LandInformation/MapServer/19",
+        where="1=1",
+        id_field="OBJECTID",
+        order_by="OBJECTID ASC",
+        municipality_field="MUNICNAME",
+        zone_field="ZONE",
+        general_use_field="GENRLLUTYPE",
+        description_field="ZONEDESC",
+        out_fields=("OBJECTID", "MUNICNAME", "ZONE", "GENRLLUTYPE", "ZONEDESC"),
+        notes=(
+            "Recommended Miami-Dade audit source for municipal zoning enrichment; "
+            "GENRLLUTYPE carries the general land-use family and is preferred over "
+            "parcel PRIMARY_ZONE alone."
+        ),
+    ),
+}
+
+
 def get_source(county_key: str) -> ParcelSource:
     try:
         return PARCEL_SOURCES[county_key]
     except KeyError as exc:
         valid = ", ".join(sorted(PARCEL_SOURCES))
         raise ValueError(f"Unknown county '{county_key}'. Valid options: {valid}") from exc
+
+
+def get_zoning_source(county_key: str) -> ZoningSource:
+    try:
+        return ZONING_SOURCES[county_key]
+    except KeyError as exc:
+        valid = ", ".join(sorted(ZONING_SOURCES))
+        raise ValueError(f"Unknown zoning source '{county_key}'. Valid options: {valid}") from exc
