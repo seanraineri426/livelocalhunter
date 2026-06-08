@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run v1 Live Local massing for eligible parcels."""
+"""Run Live Local statutory massing for eligible parcels."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from lla.massing import (  # noqa: E402
 
 
 COUNTY_LABELS = {value: key for key, value in COUNTY_FIPS.items()}
-LOG_PATH = Path("/tmp/lla_massing.log")
+LOG_PATH = Path("/tmp/lla_live_local_massing.log")
 
 
 def setup_logging() -> None:
@@ -50,7 +50,7 @@ def log_samples(samples: list[dict[str, Any]]) -> None:
     logging.info("QA sample massing:")
     for sample in samples:
         logging.info(
-            "  %s parcel=%s units=%s far=%s buildable_sf=%.0f height_ft=%.1f parking_ratio=%s required_parking=%s missing_params=%s",
+            "  %s parcel=%s units=%s far=%s buildable_sf=%.0f height_ft=%.1f parking_ratio=%s required_parking=%s confidence=%s flags=%s",
             COUNTY_LABELS.get(sample["county_fips"], sample["county_fips"]),
             sample["parcel_id"],
             sample["max_units"],
@@ -59,7 +59,8 @@ def log_samples(samples: list[dict[str, Any]]) -> None:
             float(sample["max_height_ft"]),
             sample["parking_ratio"],
             sample["required_parking"],
-            sample["missing_params"],
+            sample["confidence"],
+            sample["massing_flags"],
         )
 
 
@@ -77,6 +78,8 @@ def run(
     far_by_county: dict[str, list[Decimal]] = defaultdict(list)
     height_by_county: dict[str, list[Decimal]] = defaultdict(list)
     missing_params_by_county: Counter[str] = Counter()
+    confidence_counts: Counter[str] = Counter()
+    flag_counts: Counter[str] = Counter()
     samples: list[dict[str, Any]] = []
 
     if not dry_run:
@@ -111,6 +114,8 @@ def run(
             units_by_county[result.county_fips].append(result.max_units)
             far_by_county[result.county_fips].append(result.max_far)
             height_by_county[result.county_fips].append(result.max_height_ft)
+            confidence_counts[result.confidence] += 1
+            flag_counts.update(result.massing_flags)
             if result.missing_params:
                 totals["missing_params"] += 1
                 missing_params_by_county[result.county_fips] += 1
@@ -125,7 +130,8 @@ def run(
                         "max_height_ft": result.max_height_ft,
                         "parking_ratio": result.parking_ratio,
                         "required_parking": result.required_parking,
-                        "missing_params": result.missing_params,
+                        "confidence": result.confidence,
+                        "massing_flags": list(result.massing_flags),
                     }
                 )
 
@@ -153,6 +159,10 @@ def run(
             _avg(height_by_county[county]),
             (missing_count / processed_count * 100) if processed_count else 0,
         )
+    logging.info("QA confidence: %s", dict(sorted(confidence_counts.items())))
+    logging.info("QA top massing flags:")
+    for flag, count in flag_counts.most_common(20):
+        logging.info("  %s %s", flag, count)
     log_samples(samples)
     logging.info("Log written to %s", LOG_PATH)
 
@@ -163,6 +173,8 @@ def run(
         "far_by_county": far_by_county,
         "height_by_county": height_by_county,
         "missing_params_by_county": missing_params_by_county,
+        "confidence": confidence_counts,
+        "flags": flag_counts,
         "samples": samples,
     }
 

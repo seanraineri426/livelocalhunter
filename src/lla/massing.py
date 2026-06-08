@@ -1,4 +1,4 @@
-"""v1 Live Local massing rollups and parcel-level envelope calculations."""
+"""Live Local Act statutory massing rollups and parcel-level envelope calculations."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Iterable
 
-from psycopg2.extras import execute_values
+from psycopg2.extras import Json, execute_values
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 
-PARAMS_VERSION = "v1-massing"
+PARAMS_VERSION = "live-local-4.0-2025"
 
 DEFAULT_DENSITY_DU_AC = Decimal("15")
 DEFAULT_MAX_FAR = Decimal("1")
@@ -23,6 +23,8 @@ DEFAULT_PARKING_PER_UNIT = Decimal("1.5")
 STORY_HEIGHT_FT = Decimal("10")
 FAR_STATUTORY_MULTIPLIER = Decimal("1.5")
 MAX_PLAUSIBLE_LOCAL_FAR = Decimal("10")
+TRANSIT_STOP_PARKING_MULTIPLIER = Decimal("0.85")
+SINGLE_FAMILY_ADJACENCY_HEIGHT_CAP_STORIES = Decimal("10")
 
 
 CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
@@ -57,6 +59,8 @@ class MassingResult:
     required_parking: int
     confidence: str
     missing_params: bool
+    massing_flags: tuple[str, ...]
+    massing_inputs: dict[str, Any]
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -88,6 +92,11 @@ def _is_residential_density_source(row: dict[str, Any]) -> bool:
     )
 
 
+def _is_development_far_source(row: dict[str, Any]) -> bool:
+    category = str(row.get("category") or "").lower()
+    return category not in {"agricultural", "civic", "other"}
+
+
 def _lowest_confidence(*values: str | None) -> str:
     usable = [value for value in values if value]
     if not usable:
@@ -110,6 +119,7 @@ def fetch_zoning_districts(conn: Connection, county_fips: str | None = None) -> 
                 z.max_height_ft,
                 z.max_height_stories,
                 z.max_far,
+                z.max_lot_coverage,
                 z.parking_per_unit
             FROM lla.zoning_districts z
             JOIN lla.jurisdictions j ON j.jurisdiction_id = z.jurisdiction_id
@@ -136,13 +146,22 @@ def rollup_jurisdiction_params(rows: list[dict[str, Any]]) -> list[JurisdictionR
         if density is None:
             density = _max_decimal(row.get("max_density_du_ac") for row in district_rows)
 
-        local_far = _max_decimal(
-            (row.get("max_far") for row in district_rows),
-            max_value=MAX_PLAUSIBLE_LOCAL_FAR,
-        )
+        far_source = [row for row in district_rows if _is_development_far_source(row)]
+        local_far = _max_decimal((row.get("max_far") for row in far_source), max_value=MAX_PLAUSIBLE_LOCAL_FAR)
+        if local_far is None:
+            local_far = _max_decimal((row.get("max_far") for row in district_rows), max_value=MAX_PLAUSIBLE_LOCAL_FAR)
         parking = _max_decimal(row.get("parking_per_unit") for row in district_rows)
-        explicit_height_ft = _max_decimal(row.get("max_height_ft") for row in district_rows)
-        explicit_height_stories = _max_decimal(row.get("max_height_stories") for row in district_rows)
+        height_source = [
+            row
+            for row in district_rows
+            if str(row.get("category") or "").lower() in {"commercial", "mixed_use", "residential"}
+            or row.get("allows_residential") is True
+            or row.get("allows_multifamily") is True
+        ]
+        if not height_source:
+            height_source = district_rows
+        explicit_height_ft = _max_decimal(row.get("max_height_ft") for row in height_source)
+        explicit_height_stories = _max_decimal(row.get("max_height_stories") for row in height_source)
 
         missing: list[str] = []
         if density is None:
@@ -182,7 +201,10 @@ def rollup_jurisdiction_params(rows: list[dict[str, Any]]) -> list[JurisdictionR
                 max_height_ft=height_ft,
                 max_height_stories=height_stories,
                 base_parking_per_unit=parking,
-                zoning_crosswalk_ref=f"zoning_districts:{PARAMS_VERSION}:districts={len(district_rows)}:{source_notes}",
+                zoning_crosswalk_ref=(
+                    f"zoning_districts:{PARAMS_VERSION}:districts={len(district_rows)}:"
+                    f"far_multiplier={FAR_STATUTORY_MULTIPLIER}:{source_notes}"
+                ),
                 missing_fields=tuple(missing),
             )
         )
@@ -230,7 +252,7 @@ def upsert_jurisdiction_params(conn: Connection, rollups: list[JurisdictionRollu
                 updated_at = now()
             """,
             values,
-            template="(%s::uuid, %s, %s, %s, %s, %s, 'v1-massing', now())",
+            template=f"(%s::uuid, %s, %s, %s, %s, %s, '{PARAMS_VERSION}', now())",
             page_size=len(values),
         )
     return len(rollups)
@@ -243,11 +265,55 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
     far = _decimal(row.get("max_far")) or DEFAULT_MAX_FAR
     parking_ratio = _decimal(row.get("base_parking_per_unit")) or DEFAULT_PARKING_PER_UNIT
 
-    explicit_height_ft = _decimal(row.get("max_height_ft"))
-    explicit_height_stories = _decimal(row.get("max_height_stories"))
-    height_from_stories = explicit_height_stories * STORY_HEIGHT_FT if explicit_height_stories else None
-    height_ft = max([value for value in (explicit_height_ft, height_from_stories, DEFAULT_HEIGHT_FT) if value])
-    height_stories = max(explicit_height_stories or (height_ft / STORY_HEIGHT_FT), DEFAULT_HEIGHT_STORIES)
+    flags: list[str] = []
+    if row.get("jurisdiction_params_missing"):
+        flags.append("jurisdiction_params_missing")
+    if row.get("max_density_du_ac") is None:
+        flags.append("density_defaulted")
+    if row.get("max_far") is None:
+        flags.append("far_defaulted")
+    if row.get("base_parking_per_unit") is None:
+        flags.append("parking_defaulted")
+    if row.get("zoning_geometry_available") is not True:
+        flags.append("height_within_1mi_uses_jurisdiction_rollup")
+    if row.get("subject_zoning_matched") is not True:
+        flags.append("subject_zoning_height_not_matched")
+    if row.get("historic_height_data_available") is not True:
+        flags.append("historic_height_screen_missing")
+    flags.extend(("major_transportation_hub_input_missing", "available_parking_input_missing", "tod_area_input_missing"))
+
+    one_mile_height_ft = _decimal(row.get("height_1mi_ft"))
+    one_mile_height_stories = _decimal(row.get("height_1mi_stories"))
+    subject_height_ft = _decimal(row.get("subject_height_ft"))
+    subject_height_stories = _decimal(row.get("subject_height_stories"))
+
+    height_ft_candidates = [
+        value
+        for value in (
+            one_mile_height_ft,
+            one_mile_height_stories * STORY_HEIGHT_FT if one_mile_height_stories else None,
+            DEFAULT_HEIGHT_FT,
+        )
+        if value is not None
+    ]
+    height_ft = max(height_ft_candidates)
+    height_stories = max(one_mile_height_stories or (height_ft / STORY_HEIGHT_FT), DEFAULT_HEIGHT_STORIES)
+
+    if row.get("single_family_adjacency_possible"):
+        flags.append("single_family_adjacency_possible")
+        if height_stories > SINGLE_FAMILY_ADJACENCY_HEIGHT_CAP_STORIES:
+            height_stories = SINGLE_FAMILY_ADJACENCY_HEIGHT_CAP_STORIES
+            height_ft = min(height_ft, SINGLE_FAMILY_ADJACENCY_HEIGHT_CAP_STORIES * STORY_HEIGHT_FT)
+            flags.append("single_family_10_story_cap_applied")
+        if subject_height_ft is None and subject_height_stories is None:
+            flags.append("adjacent_tallest_building_height_missing")
+
+    if row.get("has_transit_stops") is not True:
+        flags.append("transit_stop_input_missing")
+    elif row.get("within_quarter_mile_transit"):
+        parking_ratio *= TRANSIT_STOP_PARKING_MULTIPLIER
+        flags.append("parking_15pct_transit_reduction_applied")
+        flags.append("transit_accessibility_unverified")
 
     max_units = int(math.floor(density * acreage))
     buildable_sf = far * lot_sf
@@ -260,8 +326,34 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
         or row.get("base_parking_per_unit") is None
     )
     confidence = str(row.get("confidence") or "low")
-    if missing_params or explicit_height_ft is None and explicit_height_stories is None:
+    if missing_params:
         confidence = _lowest_confidence(confidence, "low")
+    elif any(
+        flag in flags
+        for flag in (
+            "height_within_1mi_uses_jurisdiction_rollup",
+            "historic_height_screen_missing",
+            "subject_zoning_height_not_matched",
+        )
+    ):
+        confidence = _lowest_confidence(confidence, "medium")
+
+    massing_inputs = {
+        "statute_version": PARAMS_VERSION,
+        "acreage": str(acreage),
+        "lot_sf": str(lot_sf),
+        "density_du_ac": str(density),
+        "far": str(far),
+        "parking_ratio": str(parking_ratio),
+        "height_1mi_ft": str(one_mile_height_ft) if one_mile_height_ft else None,
+        "height_1mi_stories": str(one_mile_height_stories) if one_mile_height_stories else None,
+        "subject_height_ft": str(subject_height_ft) if subject_height_ft else None,
+        "subject_height_stories": str(subject_height_stories) if subject_height_stories else None,
+        "adjacent_single_family_parcels": int(row.get("adjacent_single_family_parcels") or 0),
+        "within_quarter_mile_transit": bool(row.get("within_quarter_mile_transit")),
+        "zoning_geometry_available": bool(row.get("zoning_geometry_available")),
+        "historic_height_data_available": bool(row.get("historic_height_data_available")),
+    }
 
     return MassingResult(
         parcel_id=str(row["parcel_id"]),
@@ -275,11 +367,15 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
         required_parking=required_parking,
         confidence=confidence,
         missing_params=bool(missing_params),
+        massing_flags=tuple(dict.fromkeys(flags)),
+        massing_inputs=massing_inputs,
     )
 
 
 def ensure_entitlement_upsert_target(conn: Connection) -> None:
     conn.execute(text("SET LOCAL lock_timeout = '15s'"))
+    conn.execute(text("ALTER TABLE lla.entitlement ADD COLUMN IF NOT EXISTS massing_flags TEXT[] NOT NULL DEFAULT '{}'"))
+    conn.execute(text("ALTER TABLE lla.entitlement ADD COLUMN IF NOT EXISTS massing_inputs JSONB NOT NULL DEFAULT '{}'::jsonb"))
     conn.execute(
         text(
             """
@@ -307,30 +403,110 @@ def fetch_eligible_massing_batch(
                     max(max_height_ft) AS max_height_ft,
                     max(max_height_stories) AS max_height_stories
                 FROM lla.zoning_districts
+                WHERE lower(coalesce(category, '')) IN ('commercial', 'mixed_use', 'residential')
+                   OR allows_residential IS TRUE
+                   OR allows_multifamily IS TRUE
                 GROUP BY jurisdiction_id
+            ),
+            transit_stop_count AS (
+                SELECT count(*) AS stop_count FROM lla.transit_stops
+            ),
+            batch AS (
+                SELECT
+                    p.parcel_id::text AS parcel_id,
+                    p.parcel_id AS parcel_uuid,
+                    p.county_fips,
+                    COALESCE(p.acreage, (ST_Area(p.geom::geography) * 10.76391041671) / 43560.0) AS acreage,
+                    COALESCE(p.lot_sf, ST_Area(p.geom::geography) * 10.76391041671) AS lot_sf,
+                    p.jurisdiction_id,
+                    p.zoning_code,
+                    p.zoning_map_zone,
+                    p.geom,
+                    e.confidence,
+                    jp.max_density_du_ac,
+                    jp.max_far,
+                    jp.base_parking_per_unit,
+                    hr.max_height_ft AS height_1mi_ft,
+                    hr.max_height_stories AS height_1mi_stories,
+                    (jp.jurisdiction_id IS NULL) AS jurisdiction_params_missing
+                FROM lla.entitlement e
+                JOIN lla.parcels p ON p.parcel_id = e.parcel_id
+                LEFT JOIN lla.jurisdiction_params jp ON jp.jurisdiction_id = p.jurisdiction_id
+                LEFT JOIN height_rollup hr ON hr.jurisdiction_id = p.jurisdiction_id
+                WHERE e.eligible
+                  AND (:county_fips IS NULL OR p.county_fips = :county_fips)
+                  AND (:last_parcel_id IS NULL OR p.parcel_id > CAST(:last_parcel_id AS uuid))
+                ORDER BY p.parcel_id
+                LIMIT :batch_size
             )
             SELECT
-                p.parcel_id::text AS parcel_id,
-                p.county_fips,
-                COALESCE(p.acreage, (ST_Area(p.geom::geography) * 10.76391041671) / 43560.0) AS acreage,
-                COALESCE(p.lot_sf, ST_Area(p.geom::geography) * 10.76391041671) AS lot_sf,
-                p.jurisdiction_id::text AS jurisdiction_id,
-                e.confidence,
-                jp.max_density_du_ac,
-                jp.max_far,
-                jp.base_parking_per_unit,
-                hr.max_height_ft,
-                hr.max_height_stories,
-                (jp.jurisdiction_id IS NULL) AS jurisdiction_params_missing
-            FROM lla.entitlement e
-            JOIN lla.parcels p ON p.parcel_id = e.parcel_id
-            LEFT JOIN lla.jurisdiction_params jp ON jp.jurisdiction_id = p.jurisdiction_id
-            LEFT JOIN height_rollup hr ON hr.jurisdiction_id = p.jurisdiction_id
-            WHERE e.eligible
-              AND (:county_fips IS NULL OR p.county_fips = :county_fips)
-              AND (:last_parcel_id IS NULL OR p.parcel_id > CAST(:last_parcel_id AS uuid))
-            ORDER BY p.parcel_id
-            LIMIT :batch_size
+                b.parcel_id,
+                b.county_fips,
+                b.acreage,
+                b.lot_sf,
+                b.jurisdiction_id::text AS jurisdiction_id,
+                b.confidence,
+                b.max_density_du_ac,
+                b.max_far,
+                b.base_parking_per_unit,
+                b.height_1mi_ft,
+                b.height_1mi_stories,
+                sz.max_height_ft AS subject_height_ft,
+                sz.max_height_stories AS subject_height_stories,
+                (sz.district_id IS NOT NULL) AS subject_zoning_matched,
+                false AS zoning_geometry_available,
+                false AS historic_height_data_available,
+                (sf.adjacent_single_family_parcels >= 2) AS single_family_adjacency_possible,
+                sf.adjacent_single_family_parcels,
+                (ts.stop_count > 0) AS has_transit_stops,
+                COALESCE(transit.within_quarter_mile_transit, false) AS within_quarter_mile_transit,
+                b.jurisdiction_params_missing
+            FROM batch b
+            LEFT JOIN LATERAL (
+                SELECT z.district_id, z.max_height_ft, z.max_height_stories
+                FROM lla.zoning_districts z
+                WHERE z.jurisdiction_id = b.jurisdiction_id
+                  AND lower(trim(z.district_code)) IN (
+                      lower(trim(coalesce(b.zoning_code, ''))),
+                      lower(trim(coalesce(b.zoning_map_zone, '')))
+                  )
+                ORDER BY
+                    CASE z.confidence
+                        WHEN 'high' THEN 3
+                        WHEN 'medium' THEN 2
+                        WHEN 'low' THEN 1
+                        ELSE 0
+                    END DESC
+                LIMIT 1
+            ) sz ON true
+            LEFT JOIN LATERAL (
+                SELECT count(*) AS adjacent_single_family_parcels
+                FROM (
+                    SELECT 1
+                    FROM lla.parcels p2
+                    WHERE p2.county_fips = b.county_fips
+                      AND p2.parcel_id <> b.parcel_uuid
+                      AND p2.geom && ST_Expand(b.geom, 0.00002)
+                      AND ST_DWithin(p2.geom::geography, b.geom::geography, 5)
+                      AND (
+                          p2.normalized_use ILIKE '%single%family%'
+                          OR p2.use_class ILIKE '%single%family%'
+                          OR p2.zoning_general_use ILIKE '%single%family%'
+                          OR p2.zoning_code ILIKE '%single%family%'
+                          OR p2.zoning_code ILIKE 'RS%'
+                          OR p2.zoning_code ILIKE 'R-1%'
+                      )
+                    LIMIT 2
+                ) adjacent
+            ) sf ON true
+            CROSS JOIN transit_stop_count ts
+            LEFT JOIN LATERAL (
+                SELECT true AS within_quarter_mile_transit
+                FROM lla.transit_stops t
+                WHERE t.geom && ST_Expand(b.geom, 0.004)
+                  AND ST_DWithin(t.geom::geography, b.geom::geography, 402.336)
+                LIMIT 1
+            ) transit ON ts.stop_count > 0
             """
         ),
         {
@@ -354,6 +530,8 @@ def update_entitlement_massing(conn: Connection, results: list[MassingResult]) -
             result.buildable_sf,
             result.required_parking,
             result.confidence,
+            list(result.massing_flags),
+            Json(result.massing_inputs),
         )
         for result in results
     ]
@@ -368,8 +546,10 @@ def update_entitlement_massing(conn: Connection, results: list[MassingResult]) -
                 max_height_stories = data.max_height_stories,
                 buildable_sf = data.buildable_sf,
                 required_parking = data.required_parking,
-                params_version = 'v1-massing',
+                params_version = data.params_version,
                 confidence = data.confidence,
+                massing_flags = data.massing_flags,
+                massing_inputs = data.massing_inputs,
                 computed_at = now()
             FROM (VALUES %s) AS data (
                 parcel_id,
@@ -377,12 +557,15 @@ def update_entitlement_massing(conn: Connection, results: list[MassingResult]) -
                 max_height_stories,
                 buildable_sf,
                 required_parking,
-                confidence
+                confidence,
+                massing_flags,
+                massing_inputs,
+                params_version
             )
             WHERE e.parcel_id = data.parcel_id::uuid
             """,
             values,
-            template="(%s::uuid, %s, %s, %s, %s, %s)",
+            template=f"(%s::uuid, %s, %s, %s, %s, %s, %s::text[], %s::jsonb, '{PARAMS_VERSION}')",
             page_size=len(values),
         )
     return len(results)
