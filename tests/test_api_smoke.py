@@ -75,3 +75,29 @@ def test_massing_audit_endpoint_uses_context(monkeypatch):
     response = client.get("/parcels/00000000-0000-0000-0000-000000000000/massing-audit")
     assert response.status_code == 200
     assert response.json()["massing_audit"]["deterministic"]["sanity_status"] == "ok"
+
+
+def test_massing_audit_post_passes_ai_options(monkeypatch):
+    calls = {}
+
+    monkeypatch.setattr(api_app, "build_parcel_context", lambda parcel_id: {"parcel": {"parcel_id": parcel_id}})
+
+    def fake_run_massing_audit(context, *, use_ai=False, model=None):
+        calls.update({"context": context, "use_ai": use_ai, "model": model})
+        return {
+            "deterministic": {"sanity_status": "ok", "flags": [], "buckets": {"ai_assisted": ["ai_massing_audit"]}},
+            "ai": {"status": "reviewed", "summary": "ok", "findings": [], "human_review_items": [], "caveats": [], "model": model},
+        }
+
+    monkeypatch.setattr(api_app, "run_massing_audit", fake_run_massing_audit)
+    client = TestClient(api_app.app)
+
+    response = client.post(
+        "/parcels/00000000-0000-0000-0000-000000000000/massing-audit",
+        json={"use_ai": True, "model": "openrouter/test-model"},
+    )
+
+    assert response.status_code == 200
+    assert calls["use_ai"] is True
+    assert calls["model"] == "openrouter/test-model"
+    assert response.json()["massing_audit"]["ai"]["status"] == "reviewed"

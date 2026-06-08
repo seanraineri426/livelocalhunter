@@ -153,3 +153,54 @@ def test_ai_massing_audit_invalid_json_fallback(monkeypatch):
     result = massing_audit.ai_massing_audit(_context(), {"sanity_status": "ok"})
     assert result["status"] == "unavailable"
     assert any("invalid JSON" in caveat for caveat in result["caveats"])
+
+
+def test_ai_massing_audit_missing_key_falls_back_without_request(monkeypatch):
+    def fail_post(*args, **kwargs):
+        raise AssertionError("OpenRouter should not be called without a key")
+
+    monkeypatch.setattr(massing_audit, "require_env", lambda name: (_ for _ in ()).throw(RuntimeError("missing key")))
+    monkeypatch.setattr(massing_audit.requests, "post", fail_post)
+
+    result = massing_audit.ai_massing_audit(_context(), {"sanity_status": "ok"})
+
+    assert result["status"] == "unavailable"
+    assert result["model"] == massing_audit.DEFAULT_MODEL
+    assert any("OpenRouter is not configured" in caveat for caveat in result["caveats"])
+
+
+def test_ai_massing_audit_posts_openrouter_json_request(monkeypatch):
+    calls = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"status":"reviewed","summary":"Looks reasonable.","findings":"No extra calculation.","human_review_items":[],"caveats":"Advisory only."}'
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(url, *, headers, json, timeout):
+        calls.update({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        return Response()
+
+    monkeypatch.setattr(massing_audit, "require_env", lambda name: "test-openrouter-key")
+    monkeypatch.setattr(massing_audit.requests, "post", fake_post)
+
+    result = massing_audit.ai_massing_audit(_context(), {"sanity_status": "ok"}, model="test/model", timeout=9)
+
+    assert result["status"] == "reviewed"
+    assert result["model"] == "test/model"
+    assert result["findings"] == ["No extra calculation."]
+    assert result["caveats"] == ["Advisory only."]
+    assert calls["url"] == massing_audit.OPENROUTER_URL
+    assert calls["headers"]["Authorization"] == "Bearer test-openrouter-key"
+    assert calls["json"]["model"] == "test/model"
+    assert calls["json"]["response_format"] == {"type": "json_object"}
+    assert calls["timeout"] == 9

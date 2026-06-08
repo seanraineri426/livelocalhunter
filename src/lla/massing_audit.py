@@ -472,6 +472,14 @@ def _ai_fallback(reason: str, *, model: str | None = None) -> dict[str, Any]:
     }
 
 
+def _json_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
 def ai_massing_audit(
     context: dict[str, Any],
     deterministic_audit: dict[str, Any],
@@ -529,9 +537,9 @@ def ai_massing_audit(
     return {
         "status": str(parsed.get("status") or "reviewed"),
         "summary": str(parsed.get("summary") or ""),
-        "findings": list(parsed.get("findings") or []),
-        "human_review_items": list(parsed.get("human_review_items") or []),
-        "caveats": list(parsed.get("caveats") or []),
+        "findings": _json_list(parsed.get("findings")),
+        "human_review_items": _json_list(parsed.get("human_review_items")),
+        "caveats": _json_list(parsed.get("caveats")),
         "model": selected_model,
     }
 
