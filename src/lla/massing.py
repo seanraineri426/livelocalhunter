@@ -26,6 +26,27 @@ MAX_PLAUSIBLE_LOCAL_FAR = Decimal("10")
 TRANSIT_STOP_PARKING_MULTIPLIER = Decimal("0.85")
 SINGLE_FAMILY_ADJACENCY_HEIGHT_CAP_STORIES = Decimal("10")
 
+# --- Building-envelope reconciliation constants -------------------------------
+# These translate a buildable floor-area envelope into an approximate residential
+# unit count. They are screening defaults, documented in docs/live_local_massing.md,
+# and recorded per parcel in entitlement.massing_inputs for auditability.
+#
+# AVG_UNIT_NET_SF        average net (rentable) area of one dwelling unit.
+# UNIT_GROSS_EFFICIENCY  net rentable area divided by gross building area; the
+#                        remainder is corridors, cores, walls, amenity, mechanical.
+# DEFAULT_LOT_COVERAGE   conservative max building footprint fraction used when a
+#                        zoning district (with explicit coverage/setbacks) is not
+#                        matched to the parcel.
+# SURFACE_PARKING_SF_PER_STALL  land consumed by one surface stall incl. drive aisle.
+# OVERSIZED_PARCEL_ACRES parcels above this size are almost always aggregate tracts
+#                        (sections, golf courses, government land) rather than a
+#                        single development site, so we flag and degrade confidence.
+AVG_UNIT_NET_SF = Decimal("900")
+UNIT_GROSS_EFFICIENCY = Decimal("0.82")
+DEFAULT_LOT_COVERAGE = Decimal("0.40")
+SURFACE_PARKING_SF_PER_STALL = Decimal("350")
+OVERSIZED_PARCEL_ACRES = Decimal("50")
+
 
 CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 
@@ -44,6 +65,25 @@ class JurisdictionRollup:
     base_parking_per_unit: Decimal
     zoning_crosswalk_ref: str
     missing_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EnvelopeReconciliation:
+    """Result of reconciling density, FAR, and footprint x height constraints."""
+
+    max_units: int
+    binding_constraint: str
+    buildable_sf: Decimal
+    footprint_sf: Decimal
+    density_limited_units: int
+    far_limited_units: int
+    envelope_limited_units: int
+    far_buildable_sf: Decimal
+    envelope_buildable_sf: Decimal
+    lot_coverage_fraction: Decimal
+    setback_footprint_sf: Decimal | None
+    surface_parking_sf: Decimal
+    flags: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -73,6 +113,24 @@ def _decimal(value: Any) -> Decimal | None:
     if number <= 0:
         return None
     return number
+
+
+def _coverage_fraction(value: Any) -> Decimal | None:
+    """Normalize a stored max-lot-coverage value to a 0-1 fraction.
+
+    The zoning_districts table stores coverage inconsistently: some rows hold a
+    percent (e.g. ``40`` or ``50``) and others a fraction (e.g. ``0.8``). Values
+    greater than 1 are treated as percents; values in (0, 1] are already fractions.
+    """
+
+    number = _decimal(value)
+    if number is None:
+        return None
+    if number > 1:
+        number = number / Decimal("100")
+    if number <= 0:
+        return None
+    return min(number, Decimal("1"))
 
 
 def _max_decimal(values: Iterable[Any], *, max_value: Decimal | None = None) -> Decimal | None:
@@ -258,9 +316,134 @@ def upsert_jurisdiction_params(conn: Connection, rollups: list[JurisdictionRollu
     return len(rollups)
 
 
+def _setback_footprint_sf(
+    lot_sf: Decimal,
+    front_setback_ft: Decimal | None,
+    side_setback_ft: Decimal | None,
+    rear_setback_ft: Decimal | None,
+) -> Decimal | None:
+    """Approximate the per-floor buildable footprint after setbacks.
+
+    We do not store lot dimensions, only lot area, so we model the parcel as a
+    square (side = sqrt(lot_sf)) and subtract front+rear from the depth and twice
+    the side setback from the width. This is a conservative screening proxy.
+    """
+
+    if lot_sf <= 0:
+        return None
+    if front_setback_ft is None and side_setback_ft is None and rear_setback_ft is None:
+        return None
+    side_len = Decimal(str(math.sqrt(float(lot_sf))))
+    front = front_setback_ft or Decimal("0")
+    side = side_setback_ft or Decimal("0")
+    rear = rear_setback_ft or Decimal("0")
+    buildable_depth = max(side_len - front - rear, Decimal("0"))
+    buildable_width = max(side_len - (side * 2), Decimal("0"))
+    return buildable_depth * buildable_width
+
+
+def reconcile_max_units(
+    *,
+    acreage: Decimal,
+    lot_sf: Decimal,
+    density_du_ac: Decimal,
+    statutory_far: Decimal,
+    height_stories: Decimal,
+    parking_ratio: Decimal,
+    max_lot_coverage: Any = None,
+    front_setback_ft: Any = None,
+    side_setback_ft: Any = None,
+    rear_setback_ft: Any = None,
+    zoning_matched: bool = False,
+) -> EnvelopeReconciliation:
+    """Reconcile the binding (minimum) of density, FAR, and footprint x height.
+
+    Returns the reconciled max units and the constraint that produced it, plus the
+    intermediate candidates for auditability. ``buildable_sf`` is capped to the
+    lesser of the FAR cap and the footprint x height envelope.
+    """
+
+    flags: list[str] = []
+
+    # 1. Density-limited units (gross acreage; a net/ROW deduction is not available).
+    density_limited_units = int(math.floor(density_du_ac * acreage)) if acreage > 0 else 0
+
+    # 2. FAR-limited buildable area -> units via efficiency + avg unit size.
+    far_buildable_sf = statutory_far * lot_sf
+    far_limited_units = int(
+        math.floor(far_buildable_sf * UNIT_GROSS_EFFICIENCY / AVG_UNIT_NET_SF)
+    )
+
+    # 3. Footprint (lot coverage / setbacks) x floors -> envelope-limited units.
+    coverage = _coverage_fraction(max_lot_coverage)
+    if coverage is None:
+        coverage = DEFAULT_LOT_COVERAGE
+        flags.append("lot_coverage_defaulted")
+    coverage_footprint = coverage * lot_sf
+
+    setback_footprint = _setback_footprint_sf(
+        lot_sf,
+        _decimal(front_setback_ft),
+        _decimal(side_setback_ft),
+        _decimal(rear_setback_ft),
+    )
+    if setback_footprint is None:
+        flags.append("setbacks_defaulted")
+        footprint_sf = coverage_footprint
+    else:
+        footprint_sf = min(coverage_footprint, setback_footprint)
+
+    envelope_buildable_sf = footprint_sf * height_stories
+    envelope_limited_units = int(
+        math.floor(envelope_buildable_sf * UNIT_GROSS_EFFICIENCY / AVG_UNIT_NET_SF)
+    )
+
+    if not zoning_matched:
+        flags.append("envelope_uses_default_lot_coverage")
+
+    # Binding constraint = the most restrictive of the three.
+    candidates = (
+        ("density", density_limited_units),
+        ("far", far_limited_units),
+        ("footprint_height", envelope_limited_units),
+    )
+    binding_constraint, max_units = min(candidates, key=lambda item: item[1])
+    max_units = max(max_units, 0)
+
+    buildable_sf = min(far_buildable_sf, envelope_buildable_sf)
+    required_parking = int(math.ceil(Decimal(max_units) * parking_ratio))
+    surface_parking_sf = Decimal(required_parking) * SURFACE_PARKING_SF_PER_STALL
+
+    open_area_sf = max(lot_sf - footprint_sf, Decimal("0"))
+    if surface_parking_sf > open_area_sf:
+        flags.append("surface_parking_may_not_fit_structured_parking_likely")
+
+    return EnvelopeReconciliation(
+        max_units=max_units,
+        binding_constraint=binding_constraint,
+        buildable_sf=buildable_sf,
+        footprint_sf=footprint_sf,
+        density_limited_units=density_limited_units,
+        far_limited_units=far_limited_units,
+        envelope_limited_units=envelope_limited_units,
+        far_buildable_sf=far_buildable_sf,
+        envelope_buildable_sf=envelope_buildable_sf,
+        lot_coverage_fraction=coverage,
+        setback_footprint_sf=setback_footprint,
+        surface_parking_sf=surface_parking_sf,
+        flags=tuple(flags),
+    )
+
+
 def compute_massing(row: dict[str, Any]) -> MassingResult:
     acreage = _decimal(row.get("acreage")) or Decimal("0")
     lot_sf = _decimal(row.get("lot_sf")) or Decimal("0")
+    # acreage and lot_sf are both derived from the same geometry upstream; if one is
+    # missing reconstruct it so the envelope and density checks stay consistent.
+    if lot_sf <= 0 and acreage > 0:
+        lot_sf = acreage * Decimal("43560")
+    if acreage <= 0 and lot_sf > 0:
+        acreage = lot_sf / Decimal("43560")
     density = _decimal(row.get("max_density_du_ac")) or DEFAULT_DENSITY_DU_AC
     far = _decimal(row.get("max_far")) or DEFAULT_MAX_FAR
     parking_ratio = _decimal(row.get("base_parking_per_unit")) or DEFAULT_PARKING_PER_UNIT
@@ -315,9 +498,26 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
         flags.append("parking_15pct_transit_reduction_applied")
         flags.append("transit_accessibility_unverified")
 
-    max_units = int(math.floor(density * acreage))
-    buildable_sf = far * lot_sf
+    reconciliation = reconcile_max_units(
+        acreage=acreage,
+        lot_sf=lot_sf,
+        density_du_ac=density,
+        statutory_far=far,
+        height_stories=height_stories,
+        parking_ratio=parking_ratio,
+        max_lot_coverage=row.get("subject_max_lot_coverage"),
+        front_setback_ft=row.get("subject_front_setback_ft"),
+        side_setback_ft=row.get("subject_side_setback_ft"),
+        rear_setback_ft=row.get("subject_rear_setback_ft"),
+        zoning_matched=bool(row.get("subject_zoning_matched")),
+    )
+    max_units = reconciliation.max_units
+    buildable_sf = reconciliation.buildable_sf
     required_parking = int(math.ceil(Decimal(max_units) * parking_ratio))
+    flags.extend(reconciliation.flags)
+
+    if acreage > OVERSIZED_PARCEL_ACRES:
+        flags.append("oversized_parcel_review_required")
 
     missing_params = (
         row.get("jurisdiction_params_missing")
@@ -326,7 +526,7 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
         or row.get("base_parking_per_unit") is None
     )
     confidence = str(row.get("confidence") or "low")
-    if missing_params:
+    if missing_params or "oversized_parcel_review_required" in flags:
         confidence = _lowest_confidence(confidence, "low")
     elif any(
         flag in flags
@@ -334,6 +534,9 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
             "height_within_1mi_uses_jurisdiction_rollup",
             "historic_height_screen_missing",
             "subject_zoning_height_not_matched",
+            "lot_coverage_defaulted",
+            "setbacks_defaulted",
+            "envelope_uses_default_lot_coverage",
         )
     ):
         confidence = _lowest_confidence(confidence, "medium")
@@ -353,6 +556,50 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
         "within_quarter_mile_transit": bool(row.get("within_quarter_mile_transit")),
         "zoning_geometry_available": bool(row.get("zoning_geometry_available")),
         "historic_height_data_available": bool(row.get("historic_height_data_available")),
+        # --- Building-envelope reconciliation audit trail ---
+        "binding_constraint": reconciliation.binding_constraint,
+        "max_height_stories": str(height_stories),
+        "density_limited_units": reconciliation.density_limited_units,
+        "far_limited_units": reconciliation.far_limited_units,
+        "envelope_limited_units": reconciliation.envelope_limited_units,
+        "far_buildable_sf": str(reconciliation.far_buildable_sf),
+        "envelope_buildable_sf": str(reconciliation.envelope_buildable_sf),
+        "buildable_sf": str(reconciliation.buildable_sf),
+        "footprint_sf": str(reconciliation.footprint_sf),
+        "lot_coverage_fraction": str(reconciliation.lot_coverage_fraction),
+        "setback_footprint_sf": (
+            str(reconciliation.setback_footprint_sf)
+            if reconciliation.setback_footprint_sf is not None
+            else None
+        ),
+        "subject_max_lot_coverage": (
+            str(_decimal(row.get("subject_max_lot_coverage")))
+            if _decimal(row.get("subject_max_lot_coverage")) is not None
+            else None
+        ),
+        "subject_front_setback_ft": (
+            str(_decimal(row.get("subject_front_setback_ft")))
+            if _decimal(row.get("subject_front_setback_ft")) is not None
+            else None
+        ),
+        "subject_side_setback_ft": (
+            str(_decimal(row.get("subject_side_setback_ft")))
+            if _decimal(row.get("subject_side_setback_ft")) is not None
+            else None
+        ),
+        "subject_rear_setback_ft": (
+            str(_decimal(row.get("subject_rear_setback_ft")))
+            if _decimal(row.get("subject_rear_setback_ft")) is not None
+            else None
+        ),
+        "subject_min_lot_sf": (
+            str(_decimal(row.get("subject_min_lot_sf")))
+            if _decimal(row.get("subject_min_lot_sf")) is not None
+            else None
+        ),
+        "avg_unit_net_sf": str(AVG_UNIT_NET_SF),
+        "unit_gross_efficiency": str(UNIT_GROSS_EFFICIENCY),
+        "surface_parking_sf_estimate": str(reconciliation.surface_parking_sf),
     }
 
     return MassingResult(
@@ -453,6 +700,11 @@ def fetch_eligible_massing_batch(
                 b.height_1mi_stories,
                 sz.max_height_ft AS subject_height_ft,
                 sz.max_height_stories AS subject_height_stories,
+                sz.max_lot_coverage AS subject_max_lot_coverage,
+                sz.min_lot_sf AS subject_min_lot_sf,
+                sz.front_setback_ft AS subject_front_setback_ft,
+                sz.side_setback_ft AS subject_side_setback_ft,
+                sz.rear_setback_ft AS subject_rear_setback_ft,
                 (sz.district_id IS NOT NULL) AS subject_zoning_matched,
                 false AS zoning_geometry_available,
                 false AS historic_height_data_available,
@@ -463,7 +715,9 @@ def fetch_eligible_massing_batch(
                 b.jurisdiction_params_missing
             FROM batch b
             LEFT JOIN LATERAL (
-                SELECT z.district_id, z.max_height_ft, z.max_height_stories
+                SELECT z.district_id, z.max_height_ft, z.max_height_stories,
+                       z.max_lot_coverage, z.min_lot_sf,
+                       z.front_setback_ft, z.side_setback_ft, z.rear_setback_ft
                 FROM lla.zoning_districts z
                 WHERE z.jurisdiction_id = b.jurisdiction_id
                   AND lower(trim(z.district_code)) IN (

@@ -35,9 +35,63 @@ Secondary interpretation checked for implementation context:
   store a dated July 1, 2023 density snapshot.
 - FAR/intensity: use 150 percent of the highest FAR where development is allowed.
   The statute now says FAR includes floor lot ratio and lot coverage; this model
-  stores the statutory 150 percent FAR in `jurisdiction_params.max_far`, but
-  `buildable_sf` remains `FAR * lot_sf` because lot-coverage constraints are not
-  yet modeled as a separate building footprint/height interaction.
+  stores the statutory 150 percent FAR in `jurisdiction_params.max_far`.
+
+## Building-envelope reconciliation (max_units)
+
+`max_units` is no longer a raw `density_du_ac * acreage` product. That single
+formula produced physically impossible counts on large or low-density tracts
+(e.g. a 453-acre Doral parcel at 75 du/ac returned 34,027 units at 3.5 stories).
+`max_units` is now the **binding (minimum)** of three independently computed
+constraints, and the binding constraint is recorded in
+`massing_inputs.binding_constraint`:
+
+1. **Density-limited** = `floor(max_density_du_ac * acreage)`. Acreage is gross
+   (no right-of-way/net-lot deduction is available in the data yet).
+2. **FAR-limited** = `floor(statutory_FAR * lot_sf * UNIT_GROSS_EFFICIENCY / AVG_UNIT_NET_SF)`.
+   The statutory FAR is `1.5 * local FAR`. The buildable gross floor area is
+   converted to dwelling units using two documented screening constants:
+   `AVG_UNIT_NET_SF` (default 900 sf net per unit) and `UNIT_GROSS_EFFICIENCY`
+   (default 0.82 net rentable / gross, i.e. corridors, cores, walls, amenity and
+   mechanical consume the remaining 18 percent).
+3. **Footprint x height-limited** = `floor(footprint_sf * max_height_stories * UNIT_GROSS_EFFICIENCY / AVG_UNIT_NET_SF)`.
+   The per-floor footprint is `min(lot_coverage_fraction * lot_sf, setback_footprint_sf)`.
+   - `lot_coverage_fraction` comes from the matched zoning district's
+     `max_lot_coverage` (stored inconsistently as a percent like `40` or a
+     fraction like `0.8`; both are normalized to a 0-1 fraction). When no zoning
+     district is matched, a conservative `DEFAULT_LOT_COVERAGE` of 0.40 is used and
+     the row is flagged `lot_coverage_defaulted` / `envelope_uses_default_lot_coverage`.
+   - `setback_footprint_sf` approximates the buildable footprint after front/side/
+     rear setbacks. Because only lot area (not lot dimensions) is stored, the parcel
+     is modeled as a square (`side = sqrt(lot_sf)`); front+rear are subtracted from
+     the depth and twice the side setback from the width. Missing setbacks flag
+     `setbacks_defaulted` and skip this refinement.
+   - `max_height_stories` is the existing Live Local height (highest allowed within
+     ~1 mile or 3 stories, whichever is greater).
+
+`buildable_sf` is now capped to the lesser of the FAR cap and the
+footprint x height envelope, so it can no longer exceed what the height limit
+physically permits.
+
+`massing_inputs` records every intermediate value: `density_limited_units`,
+`far_limited_units`, `envelope_limited_units`, `far_buildable_sf`,
+`envelope_buildable_sf`, `footprint_sf`, `lot_coverage_fraction`, the subject
+zoning setbacks/coverage/min-lot used, and the chosen `binding_constraint`.
+
+Parking land consumption is approximated: surface stalls
+(`required_parking * SURFACE_PARKING_SF_PER_STALL`, default 350 sf/stall) are
+compared against open lot area; if they do not fit, the row is flagged
+`surface_parking_may_not_fit_structured_parking_likely`. Full structured-parking
+modeling is out of scope.
+
+Parcels larger than `OVERSIZED_PARCEL_ACRES` (default 50 acres) are almost always
+aggregate tracts (whole sections, golf courses, government land) rather than a
+single development site; they are flagged `oversized_parcel_review_required` and
+their confidence is degraded to `low`.
+
+When zoning is unmatched or envelope inputs are defaulted, confidence is degraded
+(to `medium` for defaulted envelope inputs, to `low` for oversized parcels or
+missing jurisdiction params).
 - Height: the statutory rule is the highest currently allowed or July 1, 2023
   height for a commercial or residential building in the jurisdiction within one
   mile of the parcel, or three stories, whichever is higher. The current database
