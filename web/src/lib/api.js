@@ -8,7 +8,9 @@ export async function api(path, options = {}) {
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    throw new Error(body.detail || `API ${response.status}`)
+    const error = new Error(body.detail || `API ${response.status}`)
+    error.status = response.status
+    throw error
   }
 
   return response.json()

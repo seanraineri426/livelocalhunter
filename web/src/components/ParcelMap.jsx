@@ -75,7 +75,7 @@ function geometryBounds(geometry) {
   return bounds.isEmpty() ? null : bounds
 }
 
-export function ParcelMap({ context, geometry, geometryError, tone, loading }) {
+export function ParcelMap({ context, geometry, geometryError, tone, loading, notice, onIdentify }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markerRef = useRef(null)
@@ -165,6 +165,25 @@ export function ParcelMap({ context, geometry, geometryError, tone, loading }) {
     }
   }, [parcelGeometry])
 
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !onIdentify) return
+
+    const canvas = map.getCanvas()
+    const previousCursor = canvas.style.cursor
+    canvas.style.cursor = 'crosshair'
+
+    const handleClick = (event) => {
+      onIdentify(event.lngLat)
+    }
+
+    map.on('click', handleClick)
+    return () => {
+      map.off('click', handleClick)
+      canvas.style.cursor = previousCursor
+    }
+  }, [onIdentify])
+
   if (!MAPBOX_TOKEN) {
     return (
       <section className="map-shell map-fallback">
@@ -192,13 +211,17 @@ export function ParcelMap({ context, geometry, geometryError, tone, loading }) {
       </div>
       <div className="map-overlay bottom">
         <span>
-          {loading === 'context'
-            ? 'Loading parcel context...'
+          {loading === 'identify'
+            ? 'Identifying parcel...'
+            : loading === 'context'
+              ? 'Loading parcel context...'
             : hasOutline
               ? 'Selected parcel outline'
-              : geometryError
-                ? 'Geometry unavailable'
-                : 'Centroid marker'}
+              : notice
+                ? notice
+                : geometryError
+                  ? 'Geometry unavailable'
+                  : 'Click map or search to select'}
         </span>
         <span>{hasOutline ? 'Fitted to boundary' : 'Boundary loads per selected parcel'}</span>
       </div>

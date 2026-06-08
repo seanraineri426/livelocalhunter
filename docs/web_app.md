@@ -30,8 +30,9 @@ The Python virtual environment stays at the repository root, typically `.venv/`,
 
 ## Current Workspace
 
-- Mapbox GL dark map renders the selected parcel boundary from `GET /parcels/{parcel_id}/geometry`, with a subtle fill, bright outline, and bounds fit. If geometry is unavailable, it falls back to the centroid from `GET /parcels/{parcel_id}/context`.
+- Mapbox GL dark map can identify parcels by click via `GET /parcels/identify?lng=&lat=`, then renders the selected parcel boundary from `GET /parcels/{parcel_id}/geometry`, with a subtle fill, bright outline, and bounds fit. If geometry is unavailable, it falls back to the centroid from `GET /parcels/{parcel_id}/context`.
 - Folio + county parcel command search. The first result loads automatically and fits the map to the selected parcel boundary when available.
+- Map clicks show `Identifying parcel...` while the point lookup runs and a subtle `No parcel found here` message when no stored polygon covers the clicked point. Search selection uses the same context + geometry load flow.
 - Marker color follows parcel status when only the centroid is available: eligible, needs review, ineligible, or unknown.
 - Parcel intelligence header for address, folio, county, jurisdiction, eligibility, confidence, and audit state.
 - Known / Estimated / Needs Verification source context strip for analyst confidence.
@@ -46,4 +47,4 @@ The massing audit card reinforces that AI is a reviewer, not the calculator. Det
 
 ## Deferred
 
-Viewport-wide parcel polygons, vector tiles, and map-click parcel identify are deferred. The current map loads only the selected parcel geometry so it remains responsive and avoids bulk polygon transfer.
+Viewport-wide parcel polygons and vector tiles are deferred. The current map identifies parcels by clicked point and loads only the selected parcel geometry so it remains responsive and avoids bulk polygon transfer.

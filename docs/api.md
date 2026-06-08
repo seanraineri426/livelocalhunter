@@ -20,6 +20,7 @@ The app reads `DATABASE_URL`, `OPENROUTER_API_KEY`, and optional `OPENROUTER_MOD
 
 - `GET /health`
 - `GET /parcels/search?folio=&county=`
+- `GET /parcels/identify?lng=&lat=`
 - `GET /parcels/{parcel_id}/geometry`
 - `GET /parcels/{parcel_id}/context`
 - `GET /parcels/{parcel_id}/massing-audit?use_ai=false`
@@ -35,9 +36,11 @@ The app reads `DATABASE_URL`, `OPENROUTER_API_KEY`, and optional `OPENROUTER_MOD
 
 ## Parcel Geometry
 
+`GET /parcels/identify?lng=&lat=` returns one compact search-result-style parcel match for a clicked map point. `lng` must be between `-180` and `180`; `lat` must be between `-90` and `90`. The lookup builds a 4326 point, applies the GiST-friendly `geom && point` bbox condition, then checks `ST_Contains` / `ST_Intersects` against `lla.parcels.geom`. If overlapping polygons contain the point, the API prefers the smallest polygon, then candidate parcels, then the latest record. It returns `404` with `No parcel found at this location.` when no stored parcel polygon covers the point.
+
 `GET /parcels/{parcel_id}/geometry` returns one GeoJSON `Feature` for the selected parcel only. It reads `lla.parcels.geom`, emits EPSG:4326 GeoJSON via PostGIS, and includes only display-safe properties: parcel id, folio, eligibility/status, address, city/zip, and candidate summary fields.
 
-The endpoint is intentionally per-parcel for the current Mapbox UI. It does not bulk-load parcel polygons; viewport-wide parcel layers should use a dedicated vector tile or bounded spatial endpoint.
+The geometry endpoint is intentionally per-parcel for the current Mapbox UI. Map clicks use the identify endpoint first, then load only the selected parcel geometry. The app does not bulk-load parcel polygons; viewport-wide parcel layers should use a dedicated vector tile or bounded spatial endpoint.
 
 ## Assumption Flow
 

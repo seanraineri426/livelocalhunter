@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ParcelMap } from './components/ParcelMap'
 import { API_URL, api } from './lib/api'
 import {
@@ -461,6 +461,7 @@ function App() {
   const [status, setStatus] = useState('unreviewed')
   const [loading, setLoading] = useState('')
   const [error, setError] = useState('')
+  const [mapNotice, setMapNotice] = useState('')
 
   useEffect(() => {
     api('/scenario-templates')
@@ -486,6 +487,7 @@ function App() {
     event.preventDefault()
     setLoading('search')
     setError('')
+    setMapNotice('')
     try {
       const params = new URLSearchParams({ county })
       if (folio) params.set('folio', folio)
@@ -502,10 +504,11 @@ function App() {
     }
   }
 
-  async function loadContext(parcelId) {
+  const loadContext = useCallback(async function loadContext(parcelId) {
     setSelectedParcelId(parcelId)
     setParcelGeometry(null)
     setGeometryError('')
+    setMapNotice('')
     setLoading('context')
     setError('')
     try {
@@ -528,7 +531,33 @@ function App() {
     } finally {
       setLoading('')
     }
-  }
+  }, [])
+
+  const identifyParcel = useCallback(async function identifyParcel(lngLat) {
+    const lng = Number(lngLat?.lng)
+    const lat = Number(lngLat?.lat)
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return
+
+    setLoading('identify')
+    setError('')
+    setMapNotice('')
+    try {
+      const params = new URLSearchParams({ lng: String(lng), lat: String(lat) })
+      const parcel = await api(`/parcels/identify?${params}`)
+      setResults((current) => {
+        if (current.some((result) => result.parcel_id === parcel.parcel_id)) return current
+        return [parcel, ...current].slice(0, 20)
+      })
+      await loadContext(parcel.parcel_id)
+    } catch (err) {
+      if (err.status === 404) {
+        setMapNotice('No parcel found here')
+      } else {
+        setError(err.message)
+      }
+      setLoading('')
+    }
+  }, [loadContext])
 
   async function runFeasibility() {
     if (!selectedParcelId) return
@@ -665,6 +694,8 @@ function App() {
             geometryError={geometryError}
             tone={tone}
             loading={loading}
+            notice={mapNotice}
+            onIdentify={identifyParcel}
           />
           <SearchPanel
             county={county}

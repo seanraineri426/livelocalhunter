@@ -99,6 +99,70 @@ def _parcel_status(row: dict[str, Any]) -> str:
     return "unknown"
 
 
+@app.get("/parcels/identify")
+def identify_parcel(
+    lng: float = Query(ge=-180, le=180),
+    lat: float = Query(ge=-90, le=90),
+) -> dict[str, Any]:
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                WITH clicked_point AS (
+                    SELECT ST_SetSRID(ST_MakePoint(:lng, :lat), 4326) AS geom
+                )
+                SELECT
+                    p.parcel_id::text,
+                    p.county_fips,
+                    p.source_parcel_id,
+                    p.source_parcel_id_normalized,
+                    p.site_address,
+                    p.site_city,
+                    p.site_zip,
+                    p.lot_sf,
+                    p.acreage,
+                    p.zoning_code,
+                    p.use_class,
+                    p.is_candidate,
+                    p.candidate_bucket,
+                    p.candidate_reason,
+                    p.normalized_use,
+                    j.name AS jurisdiction,
+                    e.eligible,
+                    e.failed_reasons,
+                    e.max_units,
+                    e.confidence,
+                    e.massing_flags,
+                    rs.review_status,
+                    ST_Area(p.geom::geography) * 10.76391041671 AS geom_area_sf
+                FROM lla.parcels p
+                CROSS JOIN clicked_point pt
+                LEFT JOIN lla.jurisdictions j ON j.jurisdiction_id = p.jurisdiction_id
+                LEFT JOIN lla.entitlement e ON e.parcel_id = p.parcel_id
+                LEFT JOIN lla.parcel_review_status rs ON rs.parcel_id = p.parcel_id
+                WHERE p.geom && pt.geom
+                  AND (ST_Contains(p.geom, pt.geom) OR ST_Intersects(p.geom, pt.geom))
+                  AND (p.valid_to IS NULL OR p.valid_to >= CURRENT_DATE)
+                ORDER BY
+                    ST_Area(p.geom::geography) ASC NULLS LAST,
+                    p.is_candidate DESC NULLS LAST,
+                    p.as_of_date DESC NULLS LAST,
+                    p.updated_at DESC
+                LIMIT 1
+                """
+            ),
+            {"lng": lng, "lat": lat},
+        ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="No parcel found at this location.")
+
+    data = dict(row)
+    data["status"] = _parcel_status(data)
+    return data
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}

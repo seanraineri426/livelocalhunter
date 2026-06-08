@@ -135,6 +135,113 @@ def test_parcel_geometry_endpoint_returns_feature(monkeypatch):
     }
 
 
+def test_identify_parcel_endpoint_returns_compact_match(monkeypatch):
+    row = {
+        "parcel_id": "00000000-0000-0000-0000-000000000000",
+        "county_fips": "12086",
+        "source_parcel_id": "3530210010010",
+        "source_parcel_id_normalized": "3530210010010",
+        "site_address": "123 Main St",
+        "site_city": "Doral",
+        "site_zip": "33178",
+        "lot_sf": 43560,
+        "acreage": 1,
+        "zoning_code": "IU-C",
+        "use_class": "commercial",
+        "is_candidate": True,
+        "candidate_bucket": "commercial",
+        "candidate_reason": "candidate use",
+        "normalized_use": "commercial",
+        "jurisdiction": "Doral",
+        "eligible": True,
+        "failed_reasons": [],
+        "max_units": 75,
+        "confidence": "high",
+        "massing_flags": [],
+        "review_status": None,
+        "geom_area_sf": 43560,
+    }
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return row
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, query, params):
+            query_text = str(query)
+            assert "p.geom && pt.geom" in query_text
+            assert "ST_Contains(p.geom, pt.geom) OR ST_Intersects(p.geom, pt.geom)" in query_text
+            assert params == {"lng": -80.35, "lat": 25.82}
+            return FakeResult()
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr(api_app, "get_engine", lambda: FakeEngine())
+    client = TestClient(api_app.app)
+
+    response = client.get("/parcels/identify?lng=-80.35&lat=25.82")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["parcel_id"] == row["parcel_id"]
+    assert payload["source_parcel_id"] == row["source_parcel_id"]
+    assert payload["jurisdiction"] == "Doral"
+    assert payload["eligible"] is True
+    assert payload["confidence"] == "high"
+    assert payload["max_units"] == 75
+    assert payload["status"] == "eligible"
+
+
+def test_identify_parcel_endpoint_returns_404_when_no_match(monkeypatch):
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, _query, _params):
+            return FakeResult()
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr(api_app, "get_engine", lambda: FakeEngine())
+    client = TestClient(api_app.app)
+
+    response = client.get("/parcels/identify?lng=-80.35&lat=25.82")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No parcel found at this location."
+
+
+def test_identify_parcel_endpoint_validates_coordinates():
+    client = TestClient(api_app.app)
+
+    response = client.get("/parcels/identify?lng=-181&lat=25.82")
+
+    assert response.status_code == 422
+
+
 def test_massing_audit_post_passes_ai_options(monkeypatch):
     calls = {}
 
