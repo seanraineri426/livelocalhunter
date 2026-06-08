@@ -40,11 +40,20 @@ Millage and opt-out ingestion sources:
 `scripts/ingest_millage.py` uses Firecrawl for source discovery/scrape first and falls back to
 direct official PDF parsing when Firecrawl markdown tables are not line-parseable. Loaded rows
 store `millage_source_url`, `opt_out_source_url` when applicable, `effective_date`, `raw`, and
-`jurisdiction_name`. `opted_out_middle` remains `null` unless a verified local opt-out
-resolution is ingested. For the three pilot counties, FHC lists taxing authorities as not
-eligible to opt out based on Shimberg adequate-supply analysis, so `county_has_adequate_supply`
-is stored as `true` with the FHC URL as provenance. This is screening context only, not a legal
-determination of a recorded opt-out vote.
+`jurisdiction_name`.
+
+`scripts/ingest_tax_opt_outs.py` is the separate verified opt-out ingestion path. It only updates
+`lla.millage.opted_out_middle` when a record has an explicit true/false status, jurisdiction and
+authority scope, source URL, evidence summary, and local action/date provenance. Secondary
+summaries such as Florida Housing Coalition materials may be used for discovery, but they are not
+enough by themselves to write a local opt-out or non-opt-out decision. Absence of a discovered
+resolution is also not enough to set `opted_out_middle=false`.
+
+As of the June 2026 follow-up, targeted Firecrawl/web discovery did not find official Doral,
+Tamarac, Palm Beach County, or county-level pilot opt-out resolutions for the Missing Middle
+80-120% AMI ad valorem exemption. No `opted_out_middle` rows were updated; unknowns remain `null`.
+Existing `county_has_adequate_supply` values are retained as secondary screening context only and
+must not be treated as a verified local opt-out vote.
 
 ## Tables
 
@@ -127,6 +136,24 @@ python scripts/run_feasibility.py \
 
 Add `--audit` to request the AI cost audit. Future UI work can call the same
 parcel-id path after a map click; no frontend was added in this pass.
+
+71+ unit tax demonstration scenario:
+
+```bash
+python scripts/run_feasibility.py \
+  --parcel-id <uuid> \
+  --assumptions /tmp/lla_71plus_assumptions.json \
+  --scenario-name pilot_tax_exemption_71plus_2026 \
+  --tax-year 2025 \
+  --rent-year 2026 \
+  --save
+```
+
+The June 2026 sample demonstration used 120 total units, 72 units at or below 80% AMI,
+`affordable_share=0.6`, and `market_share=0.4`. This meets the more-than-70 affordable-unit
+threshold and lets the <=80% AMI 100% exemption tier produce positive screening tax savings
+without assuming a verified non-opt-out for the 81-120% AMI tier. If a user override exceeds the
+stored massing `max_units`, the calculator emits `total_units_exceeds_massing_max_units`.
 
 ## Limitations
 

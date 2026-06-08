@@ -102,6 +102,8 @@ def calculate_feasibility(
     total_units = int(inputs.total_units or default_units or 0)
     if total_units <= 0:
         warnings.append("total_units_missing")
+    if inputs.total_units and default_units > 0 and total_units > default_units:
+        warnings.append("total_units_exceeds_massing_max_units")
 
     affordable_share = _decimal(inputs.affordable_share, DEFAULT_AFFORDABLE_SHARE) or DEFAULT_AFFORDABLE_SHARE
     market_share = _decimal(inputs.market_share, DEFAULT_MARKET_SHARE) or DEFAULT_MARKET_SHARE

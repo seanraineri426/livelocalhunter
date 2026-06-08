@@ -132,3 +132,12 @@ def test_no_max_units_needs_review():
     )
     assert "max_units_missing" in result["warnings"]
     assert result["result"] == "needs_review"
+
+
+def test_user_units_above_massing_max_warns():
+    result = calculate_feasibility(
+        parcel_context=context(max_units=37),
+        inputs=valid_inputs(total_units=120),
+        affordable_rent_limit=rent_limit(),
+    )
+    assert "total_units_exceeds_massing_max_units" in result["warnings"]
