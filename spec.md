@@ -8,14 +8,14 @@ scaffold the whole thing at once.
 
 ## 1. What you're building
 
-A Florida Live Local deal-sourcing engine. It finds parcels eligible under the Live
-Local Act, computes the buildable massing envelope, scores feasibility (rents + tax
-exemption vs. cost), maps eligible sites and competitor activity, and tracks the deal
-pipeline in a CRM.
+A Florida Live Local parcel-intelligence engine. It identifies parcels one by one,
+computes deterministic eligibility and Live Local massing from stored data, and makes
+those facts explainable through a chat layer.
 
-The edge is the **scoring layer** — eligibility × feasibility × owner-motivation ×
-timing — not the parcel data, which is a commodity anyone can buy. The map and CRM are
-table stakes; the scoring is the product.
+The edge is the **parcel context layer**: auditable eligibility, massing inputs,
+flags, data gaps, and provenance that can be discussed conversationally. The AI
+assistant explains stored facts and diligence questions; it does not invent
+eligibility, massing, legal conclusions, ranking scores, or feasibility numbers.
 
 ---
 
@@ -107,13 +107,17 @@ computed_at`
 - **v1 — simple massing + map.** Add the basic envelope (density × acres,
   FAR × lot_sf, height = max(within-mile, 3 stories)). Write to `entitlement`.
   Render parcels on a MapLibre map, colored by eligibility.
-- **v1.5 — feasibility.** Ingest FHFC rent limits. Plug in the tax-exemption module
-  (`missing_middle_exemption.py`). Compute the development spread. Rank the map by it.
+- **v1.5 — parcel intelligence + chat.** Build a parcel context packet from stored
+  parcel, entitlement, jurisdiction, zoning, excluded-area, candidate, enrichment,
+  flags, inputs, data-gap, and provenance fields. Put an AI chat layer on top that
+  answers questions like "Why is this eligible?", "What's driving unit count?",
+  "What would counsel verify?", and "Summarize for LOI" using only that context.
 - **v2 — nuance.** Add the `local_requirements` haircuts (e.g., minimum unit size
   reducing unit count), the single-family adjacency 10-story cap, the quarter-mile
   parking reduction, and conservative/aggressive parameter pairs.
-- **v3 — intelligence + pipeline.** Permit/meeting tracker on a scheduled deployment,
-  owner-motivation overlay, the CRM, then expand to the next county.
+- **v3 — pipeline + feasibility.** Add FHFC rent limits, tax-exemption math,
+  feasibility screens, permit/meeting tracking, owner-motivation overlays, CRM, and
+  map/list ranking only after parcel-level facts are reliable.
 
 ---
 
