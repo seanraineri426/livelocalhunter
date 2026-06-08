@@ -70,6 +70,12 @@ function massingLabel(parcel, contextSummary) {
   return units ? `${units} units` : 'n/a'
 }
 
+function severityClass(severity) {
+  if (severity === 'high') return 'flag high'
+  if (severity === 'medium') return 'flag medium'
+  return 'flag'
+}
+
 function App() {
   const [folio, setFolio] = useState('')
   const [county, setCounty] = useState('miami_dade')
@@ -87,6 +93,7 @@ function App() {
   })
   const [feasibility, setFeasibility] = useState(null)
   const [costAudit, setCostAudit] = useState(null)
+  const [massingAudit, setMassingAudit] = useState(null)
   const [chatMessage, setChatMessage] = useState(suggestedPrompts[0])
   const [chatResponse, setChatResponse] = useState('')
   const [note, setNote] = useState('')
@@ -133,8 +140,12 @@ function App() {
     setLoading('context')
     setError('')
     try {
-      const data = await api(`/parcels/${parcelId}/context`)
-      setContext(data)
+      const [contextData, auditData] = await Promise.all([
+        api(`/parcels/${parcelId}/context`),
+        api(`/parcels/${parcelId}/massing-audit`),
+      ])
+      setContext(contextData)
+      setMassingAudit(auditData.massing_audit)
       setFeasibility(null)
       setCostAudit(null)
       setChatResponse('')
@@ -176,6 +187,23 @@ function App() {
         }),
       })
       setCostAudit(data.cost_audit)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading('')
+    }
+  }
+
+  async function runMassingAiAudit() {
+    if (!selectedParcelId) return
+    setLoading('massing-audit')
+    setError('')
+    try {
+      const data = await api(`/parcels/${selectedParcelId}/massing-audit`, {
+        method: 'POST',
+        body: JSON.stringify({ use_ai: true }),
+      })
+      setMassingAudit(data.massing_audit)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -398,6 +426,55 @@ function App() {
               <p>{(costAudit.findings || []).join(' ') || 'No findings returned.'}</p>
               <small>{(costAudit.caveats || []).join(' ')}</small>
             </div>
+          )}
+        </section>
+
+        <section className="panel span-2">
+          <div className="panel-heading">
+            <h2>Massing Sanity / Zoning Audit</h2>
+            <span className="badge">{massingAudit?.deterministic?.sanity_status || context?.massing_audit_summary?.sanity_status || 'not loaded'}</span>
+          </div>
+          <p className="muted">
+            Deterministic rules review the stored zoning context and massing output. AI is optional and only explains ambiguity; it is not the calculator or source of truth.
+          </p>
+          {massingAudit?.deterministic ? (
+            <div className="audit-card">
+              <p>{massingAudit.deterministic.summary}</p>
+              {massingAudit.deterministic.flags.length > 0 ? (
+                <div className="flag-list">
+                  {massingAudit.deterministic.flags.slice(0, 8).map((flag) => (
+                    <div className={severityClass(flag.severity)} key={flag.id}>
+                      <strong>{flag.title}</strong>
+                      <span>{flag.severity} - {flag.category}</span>
+                      <p>{flag.explanation}</p>
+                      <small>{flag.recommended_action}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">No deterministic flags returned.</p>
+              )}
+              {massingAudit.deterministic.buckets?.human_required?.length > 0 && (
+                <div className="chips">
+                  {massingAudit.deterministic.buckets.human_required.map((item) => <span key={item}>human: {item}</span>)}
+                </div>
+              )}
+              <button onClick={runMassingAiAudit} disabled={!selectedParcelId || loading === 'massing-audit'}>
+                {loading === 'massing-audit' ? 'Reviewing...' : 'Run AI Reviewer'}
+              </button>
+              {massingAudit.ai && (
+                <div className="ai-review">
+                  <span className="badge">AI {massingAudit.ai.status}</span>
+                  <p>{massingAudit.ai.summary || 'No AI summary returned.'}</p>
+                  {(massingAudit.ai.findings || []).slice(0, 5).map((finding, index) => (
+                    <small key={index}>{typeof finding === 'string' ? finding : JSON.stringify(finding)}</small>
+                  ))}
+                  {(massingAudit.ai.caveats || []).length > 0 && <small>{massingAudit.ai.caveats.join(' ')}</small>}
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="muted">Select a parcel to run deterministic massing sanity checks.</p>
           )}
         </section>
 

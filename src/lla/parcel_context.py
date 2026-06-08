@@ -578,4 +578,23 @@ def build_parcel_context(
         "latest_market_rent_source": latest_market_rent_source,
         "summary": summary,
     }
+    try:
+        from lla.massing_audit import deterministic_massing_audit
+
+        audit = deterministic_massing_audit(context)
+        context["massing_audit_summary"] = {
+            "sanity_status": audit["sanity_status"],
+            "summary": audit["summary"],
+            "flag_count": len(audit["flags"]),
+            "high_count": sum(1 for flag in audit["flags"] if flag.get("severity") == "high"),
+            "human_required": audit["buckets"].get("human_required", []),
+        }
+    except Exception as exc:
+        context["massing_audit_summary"] = {
+            "sanity_status": "review",
+            "summary": f"Massing audit summary unavailable: {exc}",
+            "flag_count": 0,
+            "high_count": 0,
+            "human_required": [],
+        }
     return _jsonable(context)

@@ -169,7 +169,10 @@ small {
 
 .mini-card,
 .result-card,
-.chat-response {
+.chat-response,
+.audit-card,
+.flag,
+.ai-review {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 14px;
@@ -232,8 +235,46 @@ small {
   gap: 10px;
 }
 
-.result-card p {
+.result-card p,
+.audit-card p,
+.flag p,
+.ai-review p {
   margin: 0;
+}
+
+.audit-card,
+.flag-list,
+.ai-review {
+  display: grid;
+  gap: 12px;
+}
+
+.flag {
+  border-left: 5px solid #94a3b8;
+}
+
+.flag.high {
+  background: #fef2f2;
+  border-color: #fecaca;
+  border-left-color: #dc2626;
+}
+
+.flag.medium {
+  background: #fffbeb;
+  border-color: #fde68a;
+  border-left-color: #d97706;
+}
+
+.flag strong,
+.flag span,
+.ai-review small {
+  display: block;
+}
+
+.flag span {
+  color: #64748b;
+  font-size: 12px;
+  text-transform: uppercase;
 }
 
 .chat-response {

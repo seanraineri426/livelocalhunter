@@ -42,3 +42,36 @@ def test_feasibility_endpoint_uses_service(monkeypatch):
     assert response.status_code == 200
     assert response.json()["feasibility"]["result"] == "watch"
     assert calls["template_name"] == "base_case"
+
+
+def test_massing_audit_endpoint_uses_context(monkeypatch):
+    monkeypatch.setattr(
+        api_app,
+        "build_parcel_context",
+        lambda parcel_id: {
+            "parcel": {"parcel_id": parcel_id, "acreage": 1, "lot_sf": 43560},
+            "candidate": {"candidate_bucket": "commercial"},
+            "enrichment": {"zoning_code": "MU"},
+            "jurisdiction_params": {"max_far": 1.5},
+            "matched_zoning_districts": [{"district_code": "MU", "category": "mixed_use", "confidence": "high"}],
+            "entitlement": {
+                "eligible": True,
+                "max_units": 50,
+                "max_height_stories": 5,
+                "required_parking": 75,
+                "massing_flags": [],
+                "massing_inputs": {
+                    "binding_constraint": "density",
+                    "density_limited_units": 50,
+                    "far_limited_units": 60,
+                    "envelope_limited_units": 100,
+                    "subject_zoning": {"matched": True, "category": "mixed_use", "confidence": "high"},
+                },
+            },
+            "summary": {"data_gaps": []},
+        },
+    )
+    client = TestClient(api_app.app)
+    response = client.get("/parcels/00000000-0000-0000-0000-000000000000/massing-audit")
+    assert response.status_code == 200
+    assert response.json()["massing_audit"]["deterministic"]["sanity_status"] == "ok"

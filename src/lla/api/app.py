@@ -15,6 +15,7 @@ from lla.cost_audit import audit_cost_assumptions
 from lla.db import get_engine
 from lla.feasibility_defaults import list_scenario_templates
 from lla.feasibility_service import compute_parcel_feasibility, json_default, save_scenario
+from lla.massing_audit import run_massing_audit
 from lla.parcel_chat import ParcelChatError, chat_about_parcel
 from lla.parcel_context import ParcelContextError, build_parcel_context
 
@@ -38,6 +39,11 @@ class CostAuditRequest(BaseModel):
     assumptions: dict[str, Any] = Field(default_factory=dict)
     template_name: str | None = None
     feasibility: dict[str, Any] | None = None
+
+
+class MassingAuditRequest(BaseModel):
+    use_ai: bool = False
+    model: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -136,6 +142,31 @@ def search_parcels(
 def parcel_context(parcel_id: str) -> dict[str, Any]:
     try:
         return build_parcel_context(parcel_id=parcel_id)
+    except ParcelContextError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/parcels/{parcel_id}/massing-audit")
+def parcel_massing_audit(
+    parcel_id: str,
+    use_ai: bool = Query(default=False),
+    model: str | None = Query(default=None),
+) -> dict[str, Any]:
+    try:
+        context = build_parcel_context(parcel_id=parcel_id)
+        return {"parcel_id": parcel_id, "massing_audit": run_massing_audit(context, use_ai=use_ai, model=model)}
+    except ParcelContextError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/parcels/{parcel_id}/massing-audit")
+def post_parcel_massing_audit(parcel_id: str, request: MassingAuditRequest) -> dict[str, Any]:
+    try:
+        context = build_parcel_context(parcel_id=parcel_id)
+        return {
+            "parcel_id": parcel_id,
+            "massing_audit": run_massing_audit(context, use_ai=request.use_ai, model=request.model),
+        }
     except ParcelContextError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
