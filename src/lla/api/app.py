@@ -109,6 +109,7 @@ def search_parcels(
             p.candidate_reason,
             p.normalized_use,
             e.eligible,
+            e.failed_reasons,
             e.max_units,
             e.confidence,
             e.massing_flags

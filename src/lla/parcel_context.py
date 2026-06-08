@@ -319,6 +319,30 @@ def _fetch_latest_market_rent_source(conn: Connection, parcel_id: str) -> dict[s
     return dict(row) if row else None
 
 
+def _massing_applies(parcel: dict[str, Any]) -> bool:
+    return parcel.get("eligible") is True
+
+
+def _entitlement_massing_fields(parcel: dict[str, Any]) -> dict[str, Any]:
+    if not _massing_applies(parcel):
+        return {
+            "max_units": None,
+            "max_height_stories": None,
+            "buildable_sf": None,
+            "required_parking": None,
+            "massing_flags": [],
+            "massing_inputs": {},
+        }
+    return {
+        "max_units": parcel.get("max_units"),
+        "max_height_stories": parcel.get("max_height_stories"),
+        "buildable_sf": parcel.get("buildable_sf"),
+        "required_parking": parcel.get("required_parking"),
+        "massing_flags": parcel.get("massing_flags") or [],
+        "massing_inputs": parcel.get("massing_inputs") or {},
+    }
+
+
 def _data_gaps(parcel: dict[str, Any], zoning: list[dict[str, Any]], excluded: list[dict[str, Any]]) -> list[str]:
     gaps: list[str] = []
     if not parcel.get("jurisdiction_id"):
@@ -337,7 +361,7 @@ def _data_gaps(parcel: dict[str, Any], zoning: list[dict[str, Any]], excluded: l
         gaps.append("jurisdiction_params_missing")
     if not parcel.get("source_parcel_id_normalized"):
         gaps.append("normalized_folio_missing")
-    if parcel.get("massing_flags"):
+    if _massing_applies(parcel) and parcel.get("massing_flags"):
         gaps.extend(str(flag) for flag in parcel["massing_flags"] if str(flag).endswith("_missing"))
         if "oversized_parcel_review_required" in parcel["massing_flags"]:
             gaps.append("manual_site_boundary_required")
@@ -368,7 +392,8 @@ def _summary_sections(
         if parcel.get("eligible") is False
         else "not computed"
     )
-    flags = list(parcel.get("massing_flags") or [])
+    massing_fields = _entitlement_massing_fields(parcel)
+    flags = list(massing_fields["massing_flags"])
     review_flags = {
         "oversized_parcel_review_required",
         "manual_site_boundary_required",
@@ -400,12 +425,13 @@ def _summary_sections(
             "review_required": review_required,
         },
         "massing": {
-            "max_units": parcel.get("max_units"),
-            "buildable_sf": parcel.get("buildable_sf"),
-            "max_height_stories": parcel.get("max_height_stories"),
-            "required_parking": parcel.get("required_parking"),
-            "inputs": parcel.get("massing_inputs") or {},
+            "max_units": massing_fields["max_units"],
+            "buildable_sf": massing_fields["buildable_sf"],
+            "max_height_stories": massing_fields["max_height_stories"],
+            "required_parking": massing_fields["required_parking"],
+            "inputs": massing_fields["massing_inputs"],
             "review_required": review_required,
+            "applies": _massing_applies(parcel),
         },
         "flags": flags,
         "data_gaps": data_gaps,
@@ -469,6 +495,7 @@ def build_parcel_context(
     data_gaps = _data_gaps(parcel, matched_zoning, excluded_intersections)
     latest_scenario_summary = _scenario_summary(latest_scenario)
     summary = _summary_sections(parcel, matched_zoning, excluded_intersections, data_gaps, latest_market_rent_source)
+    massing_fields = _entitlement_massing_fields(parcel)
 
     context = {
         "context_version": "parcel-intelligence-v1",
@@ -535,16 +562,16 @@ def build_parcel_context(
             "entitlement_id": parcel.get("entitlement_id"),
             "eligible": parcel.get("eligible"),
             "failed_reasons": parcel.get("failed_reasons") or [],
-            "max_units": parcel.get("max_units"),
-            "max_height_stories": parcel.get("max_height_stories"),
-            "buildable_sf": parcel.get("buildable_sf"),
-            "required_parking": parcel.get("required_parking"),
+            "max_units": massing_fields["max_units"],
+            "max_height_stories": massing_fields["max_height_stories"],
+            "buildable_sf": massing_fields["buildable_sf"],
+            "required_parking": massing_fields["required_parking"],
             "statute_version": parcel.get("statute_version"),
             "params_version": parcel.get("entitlement_params_version"),
             "confidence": parcel.get("entitlement_confidence"),
             "computed_at": parcel.get("entitlement_computed_at"),
-            "massing_flags": parcel.get("massing_flags") or [],
-            "massing_inputs": parcel.get("massing_inputs") or {},
+            "massing_flags": massing_fields["massing_flags"],
+            "massing_inputs": massing_fields["massing_inputs"],
         },
         "latest_scenario": latest_scenario,
         "latest_scenario_summary": latest_scenario_summary,

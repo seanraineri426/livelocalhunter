@@ -664,6 +664,44 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
     )
 
 
+MASSING_COLUMNS_SQL = """
+    max_units = NULL,
+    max_height_stories = NULL,
+    buildable_sf = NULL,
+    required_parking = NULL,
+    massing_flags = '{}',
+    massing_inputs = '{}'::jsonb
+"""
+
+
+def clear_ineligible_entitlement_massing(conn: Connection, *, county_fips: str | None = None) -> int:
+    """Null stale massing columns on entitlement rows marked ineligible."""
+
+    result = conn.execute(
+        text(
+            f"""
+            UPDATE lla.entitlement AS e
+            SET
+                {MASSING_COLUMNS_SQL}
+            FROM lla.parcels p
+            WHERE e.parcel_id = p.parcel_id
+              AND NOT e.eligible
+              AND (:county_fips IS NULL OR p.county_fips = :county_fips)
+              AND (
+                  e.max_units IS NOT NULL
+                  OR e.max_height_stories IS NOT NULL
+                  OR e.buildable_sf IS NOT NULL
+                  OR e.required_parking IS NOT NULL
+                  OR cardinality(e.massing_flags) > 0
+                  OR e.massing_inputs <> '{{}}'::jsonb
+              )
+            """
+        ),
+        {"county_fips": county_fips},
+    )
+    return int(result.rowcount or 0)
+
+
 def ensure_entitlement_upsert_target(conn: Connection) -> None:
     conn.execute(text("SET LOCAL lock_timeout = '15s'"))
     conn.execute(text("ALTER TABLE lla.entitlement ADD COLUMN IF NOT EXISTS massing_flags TEXT[] NOT NULL DEFAULT '{}'"))

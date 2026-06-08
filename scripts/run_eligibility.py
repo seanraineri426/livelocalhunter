@@ -141,7 +141,19 @@ def upsert_results(conn: Connection, rows: list[dict[str, Any]]) -> int:
                 statute_version = EXCLUDED.statute_version,
                 params_version = EXCLUDED.params_version,
                 confidence = EXCLUDED.confidence,
-                computed_at = now()
+                computed_at = now(),
+                max_units = CASE WHEN EXCLUDED.eligible THEN lla.entitlement.max_units END,
+                max_height_stories = CASE WHEN EXCLUDED.eligible THEN lla.entitlement.max_height_stories END,
+                buildable_sf = CASE WHEN EXCLUDED.eligible THEN lla.entitlement.buildable_sf END,
+                required_parking = CASE WHEN EXCLUDED.eligible THEN lla.entitlement.required_parking END,
+                massing_flags = CASE
+                    WHEN EXCLUDED.eligible THEN lla.entitlement.massing_flags
+                    ELSE '{}'::text[]
+                END,
+                massing_inputs = CASE
+                    WHEN EXCLUDED.eligible THEN lla.entitlement.massing_inputs
+                    ELSE '{}'::jsonb
+                END
             """,
             values,
             template="(%s::uuid, %s, %s::text[], '2025', 'v1', %s, now())",

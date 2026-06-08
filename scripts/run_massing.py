@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from lla.config import COUNTY_FIPS  # noqa: E402
 from lla.db import get_engine  # noqa: E402
 from lla.massing import (  # noqa: E402
+    clear_ineligible_entitlement_massing,
     compute_massing,
     ensure_entitlement_upsert_target,
     fetch_eligible_massing_batch,
@@ -82,9 +83,13 @@ def run(
     flag_counts: Counter[str] = Counter()
     samples: list[dict[str, Any]] = []
 
+    cleared_ineligible = 0
     if not dry_run:
         with engine.begin() as conn:
             ensure_entitlement_upsert_target(conn)
+            cleared_ineligible = clear_ineligible_entitlement_massing(conn, county_fips=county_fips)
+        if cleared_ineligible:
+            logging.info("cleared stale massing on %s ineligible entitlement rows", cleared_ineligible)
 
     last_parcel_id: str | None = None
     processed = 0
@@ -167,6 +172,7 @@ def run(
     logging.info("Log written to %s", LOG_PATH)
 
     return {
+        "cleared_ineligible": cleared_ineligible,
         "totals": totals,
         "by_county": by_county,
         "units_by_county": units_by_county,

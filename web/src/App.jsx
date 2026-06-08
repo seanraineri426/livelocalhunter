@@ -47,6 +47,29 @@ function reviewRequired(flags = []) {
   ].includes(flag))
 }
 
+function eligibilityLabel(parcel) {
+  if (parcel?.eligible === false) {
+    const reasons = parcel.failed_reasons || []
+    return reasons.length ? `ineligible: ${reasons.slice(0, 2).join(', ')}` : 'ineligible'
+  }
+  if (parcel?.eligible === true) {
+    return reviewRequired(parcel.massing_flags || []) ? 'review' : 'eligible'
+  }
+  return 'not computed'
+}
+
+function massingLabel(parcel, contextSummary) {
+  if (parcel?.eligible === false || contextSummary?.massing?.applies === false) {
+    const reasons = parcel?.failed_reasons || contextSummary?.eligibility?.failed_reasons || []
+    return reasons.length ? `not applicable (${reasons[0]})` : 'not applicable'
+  }
+  if (contextSummary?.massing?.review_required || reviewRequired(parcel?.massing_flags || [])) {
+    return 'Review required'
+  }
+  const units = parcel?.max_units ?? contextSummary?.massing?.max_units
+  return units ? `${units} units` : 'n/a'
+}
+
 function App() {
   const [folio, setFolio] = useState('')
   const [county, setCounty] = useState('miami_dade')
@@ -244,7 +267,8 @@ function App() {
           <div className="results">
             {results.map((parcel) => {
               const address = formatAddress(parcel)
-              const needsReview = reviewRequired(parcel.massing_flags || [])
+              const eligible = parcel.eligible === true
+              const needsReview = eligible && reviewRequired(parcel.massing_flags || [])
               return (
                 <button
                   className={parcel.parcel_id === selectedParcelId ? 'result selected' : 'result'}
@@ -255,7 +279,7 @@ function App() {
                   {address && <span>{address}</span>}
                   <span>{formatAcres(parcel)} - {parcel.candidate_bucket || parcel.normalized_use || parcel.use_class || 'use n/a'}</span>
                   <span>
-                    {parcel.county_fips} - {needsReview ? 'review massing' : `${parcel.max_units || 'n/a'} max units`} - {parcel.eligible && !needsReview ? 'eligible' : 'review'}
+                    {parcel.county_fips} - {eligible ? (needsReview ? 'review massing' : `${parcel.max_units || 'n/a'} max units`) : 'massing n/a'} - {eligibilityLabel(parcel)}
                   </span>
                   {parcel.zoning_code && <span>zoning {parcel.zoning_code}</span>}
                 </button>
@@ -292,8 +316,12 @@ function App() {
                 </div>
                 <div className="mini-card">
                   <span>Massing</span>
-                  <strong>{context.summary?.massing?.review_required ? 'Review required' : `${context.entitlement?.max_units || 'n/a'} units`}</strong>
-                  <small>{context.entitlement?.max_height_stories || 'n/a'} stories</small>
+                  <strong>{massingLabel(context.entitlement, context.summary)}</strong>
+                  <small>
+                    {context.summary?.massing?.applies === false
+                      ? (context.entitlement?.failed_reasons?.[0] || 'ineligible')
+                      : `${context.entitlement?.max_height_stories || 'n/a'} stories`}
+                  </small>
                 </div>
                 <div className="mini-card">
                   <span>Jurisdiction</span>

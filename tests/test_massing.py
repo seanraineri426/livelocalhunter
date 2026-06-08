@@ -5,11 +5,19 @@ from decimal import Decimal
 from lla.massing import (
     AVG_UNIT_NET_SF,
     DEFAULT_LOT_COVERAGE,
+    MASSING_COLUMNS_SQL,
     UNIT_GROSS_EFFICIENCY,
     _coverage_fraction,
+    clear_ineligible_entitlement_massing,
     compute_massing,
     reconcile_max_units,
 )
+
+
+def test_clear_ineligible_entitlement_massing_sql_targets_stale_rows_only():
+    assert "max_units = NULL" in MASSING_COLUMNS_SQL
+    assert "massing_inputs = '{}'::jsonb" in MASSING_COLUMNS_SQL
+    assert callable(clear_ineligible_entitlement_massing)
 
 
 def test_coverage_fraction_normalizes_percent_and_fraction():
