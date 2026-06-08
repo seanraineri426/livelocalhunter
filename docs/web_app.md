@@ -1,6 +1,6 @@
 # Parcel Workspace Web App
 
-The local web app lives in `web/` and uses Vite + React. It is a panel-first internal tool shell with no Mapbox dependency in this pass.
+The local web app lives in `web/` and uses Vite + React. It is a Mapbox-first parcel intelligence workspace: the map sits beside a sticky analyst panel for eligibility, massing, feasibility, audits, grounded parcel chat, notes, and review status.
 
 ## Run Locally
 
@@ -14,24 +14,36 @@ Start the web app:
 
 ```bash
 cd web
+cp .env.example .env.local
+# Edit .env.local and set VITE_MAPBOX_TOKEN if you want the map.
 npm run dev
 ```
 
-The web app reads `VITE_API_URL` and defaults to `http://127.0.0.1:8000`.
+The web app reads:
 
-## Current Panels
+- `VITE_API_URL`, defaulting to `http://127.0.0.1:8000`.
+- `VITE_MAPBOX_TOKEN`, required for the Mapbox map. The Vite config also bridges the repo-root `MAPBOX_TOKEN` into `VITE_MAPBOX_TOKEN` for local development, exposing only the Mapbox browser token. Do not expose `DATABASE_URL`, `OPENROUTER_API_KEY`, service role keys, or other server-side secrets to Vite.
 
-- Folio + county parcel search.
-- Parcel intelligence cards for eligibility, massing, jurisdiction, flags/data gaps, and latest market rent provenance.
+If `VITE_MAPBOX_TOKEN` is missing, the app shows a clear fallback card and the rest of the parcel workspace remains usable.
+
+The Python virtual environment stays at the repository root, typically `.venv/`, for the API and workers. The web app does not use a Python venv; it uses npm packages plus the Vite env file in `web/.env.local`.
+
+## Current Workspace
+
+- Mapbox GL dark map centered on the selected parcel centroid from `GET /parcels/{parcel_id}/context`.
+- Folio + county parcel command search. The first result loads automatically and flies the map to the stored centroid.
+- Marker color follows parcel status: eligible, needs review, ineligible, or unknown.
+- Parcel intelligence header for address, folio, county, jurisdiction, eligibility, confidence, and audit state.
+- Known / Estimated / Needs Verification source context strip for analyst confidence.
 - Massing Sanity / Zoning Audit card with deterministic flags loaded automatically and an explicit AI reviewer button.
 - Template selector and hard-cost/acquisition/rent inputs.
 - Feasibility result card backed by the API.
 - Cost audit card backed by server-side OpenRouter calls.
-- Parcel chat panel with suggested diligence prompts.
+- Parcel chat panel with suggested diligence prompts, message bubbles, loading and empty states, and a source-context explanation.
 - Review status and notes controls.
 
 The massing audit card reinforces that AI is a reviewer, not the calculator. Deterministic flags come from stored parcel context and massing output; OpenRouter is only called when the analyst clicks `Run AI Reviewer`.
 
 ## Deferred
 
-Mapbox and geometry-driven map interactions are intentionally deferred. The current slice keeps the UI interoperable with the API and database without adding map token handling or map state.
+Parcel polygons/vector tiles are deferred until there is a stable frontend-safe geometry endpoint or tile source. The current Mapbox slice uses the parcel centroid already returned in the parcel context packet and does not add backend geometry routes.
