@@ -95,6 +95,14 @@ must not be treated as a verified local opt-out vote.
 - `lla.utility_allowances`: source-backed county/PHA utility allowance schedule
   rows by year, bedroom count, unit type, utility profile, source URL, raw
   provenance, and confidence.
+- `lla.market_rent_sources`: parcel or area market-rent assumptions with
+  source type, report metadata, submarket, bedroom count, rent, vacancy,
+  concessions, confidence, notes, and optional source-file reference.
+- `lla.scenario_templates`: seeded template metadata and assumption JSON for
+  conservative, base-case, aggressive, internal-cost-advantage,
+  tax-exemption, and no-tax-benefit cases. Runtime code keeps the same defaults
+  in `src/lla/feasibility_defaults.py` so API smoke tests and local tools do
+  not require a live DB just to list templates.
 - `lla.millage`: existing table, extended with source URLs, jurisdiction name,
   effective date, raw JSON, and update timestamp.
 - `lla.parcel_scenarios`: parcel-level assumptions, deterministic feasibility
@@ -127,6 +135,12 @@ unit threshold data is missing.
 - hard costs by gross SF, per-unit, or total hard-cost basis;
 - soft costs, contingency, financing/carry, and TDC excluding land;
 - supportable land value, per-unit metrics, feasibility ratio, and result.
+
+`src/lla/feasibility_service.py` is the shared orchestration layer used by the
+API. It applies a scenario template, merges explicit assumptions, builds parcel
+context, looks up affordable rent limits and utility allowances, attaches the
+latest market-rent provenance when available, runs the tax exemption estimate,
+and finally calls the pure calculator.
 
 The result bands are:
 

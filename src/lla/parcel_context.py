@@ -248,6 +248,7 @@ def _fetch_latest_scenario(conn: Connection, parcel_id: str) -> dict[str, Any] |
                 scenario_id::text,
                 scenario_name,
                 status,
+                assumptions_jsonb,
                 feasibility_output_jsonb,
                 tax_exemption_output_jsonb,
                 cost_audit_jsonb,
@@ -256,6 +257,55 @@ def _fetch_latest_scenario(conn: Connection, parcel_id: str) -> dict[str, Any] |
             FROM lla.parcel_scenarios
             WHERE parcel_id = CAST(:parcel_id AS uuid)
             ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ),
+        {"parcel_id": parcel_id},
+    ).mappings().first()
+    return dict(row) if row else None
+
+
+def _scenario_summary(scenario: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not scenario:
+        return None
+    feasibility = scenario.get("feasibility_output_jsonb") or {}
+    return {
+        "scenario_id": scenario.get("scenario_id"),
+        "scenario_name": scenario.get("scenario_name"),
+        "status": scenario.get("status"),
+        "result": feasibility.get("result"),
+        "updated_at": scenario.get("updated_at"),
+        "template_name": (scenario.get("assumptions_jsonb") or {}).get("template_name"),
+        "warnings_count": len(feasibility.get("warnings") or []),
+        "program": feasibility.get("program") or {},
+        "metrics": feasibility.get("metrics") or {},
+    }
+
+
+def _fetch_latest_market_rent_source(conn: Connection, parcel_id: str) -> dict[str, Any] | None:
+    if conn.execute(text("SELECT to_regclass('lla.market_rent_sources')")).scalar() is None:
+        return None
+    row = conn.execute(
+        text(
+            """
+            SELECT
+                market_rent_source_id::text,
+                source_type,
+                report_name,
+                report_date::text AS report_date,
+                submarket,
+                bedroom_count,
+                market_rent_monthly,
+                rent_psf,
+                vacancy_rate,
+                concessions_notes,
+                confidence,
+                notes,
+                source_file_ref,
+                updated_at
+            FROM lla.market_rent_sources
+            WHERE parcel_id = CAST(:parcel_id AS uuid)
+            ORDER BY report_date DESC NULLS LAST, updated_at DESC
             LIMIT 1
             """
         ),
@@ -294,6 +344,7 @@ def _summary_sections(
     zoning: list[dict[str, Any]],
     excluded: list[dict[str, Any]],
     data_gaps: list[str],
+    market_rent_source: dict[str, Any] | None,
 ) -> dict[str, Any]:
     land_use = categorize_land_use(parcel)
     jurisdiction = parcel.get("jurisdiction_name") or "unknown jurisdiction"
@@ -360,6 +411,7 @@ def _summary_sections(
                 }
                 for row in excluded
             ],
+            "latest_market_rent_source": market_rent_source,
         },
     }
 
@@ -388,9 +440,11 @@ def build_parcel_context(
         matched_zoning = _fetch_matched_zoning(conn, parcel)
         excluded_intersections = _fetch_excluded_intersections(conn, parcel["parcel_id"])
         latest_scenario = _fetch_latest_scenario(conn, parcel["parcel_id"])
+        latest_market_rent_source = _fetch_latest_market_rent_source(conn, parcel["parcel_id"])
 
     data_gaps = _data_gaps(parcel, matched_zoning, excluded_intersections)
-    summary = _summary_sections(parcel, matched_zoning, excluded_intersections, data_gaps)
+    latest_scenario_summary = _scenario_summary(latest_scenario)
+    summary = _summary_sections(parcel, matched_zoning, excluded_intersections, data_gaps, latest_market_rent_source)
 
     context = {
         "context_version": "parcel-intelligence-v1",
@@ -464,6 +518,8 @@ def build_parcel_context(
             "massing_inputs": parcel.get("massing_inputs") or {},
         },
         "latest_scenario": latest_scenario,
+        "latest_scenario_summary": latest_scenario_summary,
+        "latest_market_rent_source": latest_market_rent_source,
         "summary": summary,
     }
     return _jsonable(context)
