@@ -23,6 +23,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import requests
+import psycopg2.errors
+from psycopg2.extras import execute_values
 from sqlalchemy import text
 
 from lla.arcgis import ArcGISError, extract_site_address
@@ -94,18 +96,52 @@ def fetch_addresses(source, parcel_ids: list[str], *, timeout: int = 60, retries
     return out
 
 
-UPDATE_SQL = text(
-    """
-    UPDATE lla.parcels
-    SET site_address = :site_address,
-        site_city = :site_city,
-        site_zip = :site_zip,
-        address_source = :address_source,
-        address_updated_at = now(),
-        updated_at = now()
-    WHERE county_fips = :county_fips AND source_parcel_id = :source_parcel_id
-    """
-)
+def _bulk_update_addresses(engine, rows: list[dict], *, retries: int = 3) -> int:
+    """Apply all address updates in a batch with one round-trip via UPDATE ... FROM."""
+
+    if not rows:
+        return 0
+    values = [
+        (
+            r["county_fips"],
+            r["source_parcel_id"],
+            r.get("site_address"),
+            r.get("site_city"),
+            r.get("site_zip"),
+            r["address_source"],
+        )
+        for r in rows
+    ]
+    for attempt in range(retries):
+        try:
+            with engine.begin() as conn:
+                dbapi_conn = conn.connection.driver_connection
+                with dbapi_conn.cursor() as cursor:
+                    execute_values(
+                        cursor,
+                        """
+                        UPDATE lla.parcels AS p
+                        SET site_address = data.site_address,
+                            site_city = data.site_city,
+                            site_zip = data.site_zip,
+                            address_source = data.address_source,
+                            address_updated_at = now(),
+                            updated_at = now()
+                        FROM (VALUES %s) AS data (
+                            county_fips, source_parcel_id, site_address, site_city, site_zip, address_source
+                        )
+                        WHERE p.county_fips = data.county_fips
+                          AND p.source_parcel_id = data.source_parcel_id
+                        """,
+                        values,
+                        page_size=len(values),
+                    )
+            break
+        except psycopg2.errors.DeadlockDetected:
+            if attempt == retries - 1:
+                raise
+            time.sleep(2 * (attempt + 1))
+    return len(rows)
 
 
 def backfill_county(engine, county_key: str, *, batch_size: int, refresh: bool, limit: int | None) -> dict:
@@ -157,9 +193,7 @@ def backfill_county(engine, county_key: str, *, batch_size: int, refresh: bool, 
             for pid, addr in addresses.items()
         ]
         if rows:
-            with engine.begin() as conn:
-                conn.execute(UPDATE_SQL, rows)
-            updated += len(rows)
+            updated += _bulk_update_addresses(engine, rows)
         processed += len(chunk)
         if processed % (batch_size * 10) == 0:
             logging.info("%s: processed %s/%s (updated %s)", county_key, processed, len(ids), updated)
