@@ -19,7 +19,7 @@ from lla.cost_audit import audit_cost_assumptions  # noqa: E402
 from lla.db import get_engine  # noqa: E402
 from lla.feasibility_calc import FeasibilityInputs, calculate_feasibility  # noqa: E402
 from lla.parcel_context import build_parcel_context  # noqa: E402
-from lla.rent_limits import lookup_rent_limit, rent_limit_to_dict  # noqa: E402
+from lla.rent_limits import lookup_rent_limit, lookup_utility_allowance, rent_limit_to_dict, utility_allowance_to_dict  # noqa: E402
 from lla.tax_exemption import AffordableUnitMix, estimate_exemption, fetch_millage_rows  # noqa: E402
 
 
@@ -121,6 +121,12 @@ def main() -> None:
             bedroom_count=inputs.bedrooms,
             conn=conn,
         )
+        utility_allowance = lookup_utility_allowance(
+            county_fips=parcel["county_fips"],
+            year=args.rent_year,
+            bedroom_count=inputs.bedrooms,
+            conn=conn,
+        )
         millage_rows = fetch_millage_rows(
             conn,
             jurisdiction_id=(context.get("jurisdiction") or {}).get("jurisdiction_id"),
@@ -143,6 +149,7 @@ def main() -> None:
         parcel_context=context,
         inputs=inputs,
         affordable_rent_limit=rent_limit_to_dict(rent_limit),
+        utility_allowance=utility_allowance_to_dict(utility_allowance),
         tax_exemption=tax_output,
     )
     audit_output = audit_cost_assumptions(
@@ -170,6 +177,7 @@ def main() -> None:
                 "scenario_name": args.scenario_name,
                 "assumptions": assumptions,
                 "rent_limit": rent_limit_to_dict(rent_limit),
+                "utility_allowance": utility_allowance_to_dict(utility_allowance),
                 "tax_exemption": tax_output,
                 "feasibility": feasibility_output,
                 "cost_audit": audit_output,

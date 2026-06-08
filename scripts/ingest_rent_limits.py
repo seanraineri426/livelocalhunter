@@ -25,6 +25,10 @@ from lla.firecrawl import FirecrawlClient, FirecrawlError  # noqa: E402
 LOG_PATH = Path("/tmp/lla_rent_limits.log")
 SHIMBERG_RESULTS_URL = "https://flhousingdata.shimberg.ufl.edu/income-and-rent-limits/results?nid=1"
 FHFC_RENT_LIMITS_URL = "https://www.floridahousing.org/owners-and-managers/compliance/rent-limits"
+FHFC_INCOME_LIMITS_URL = "https://www.floridahousing.org/owners-and-managers/compliance/income-limits"
+HUD_HOME_RENT_LIMITS_URL = "https://www.huduser.gov/portal/datasets/HOME-Rent-limits.html"
+HUD_MTSP_LIMITS_URL = "https://www.huduser.gov/portal/datasets/mtsp.html"
+HUD_FMR_2026_URL = "https://www.huduser.gov/portal/datasets/fmr/fmr2026/FY2026_FMR_Schedule.pdf"
 PROGRAM = "Florida Housing Rent Limits"
 COUNTY_NAMES = {
     "12086": "Miami-Dade County",
@@ -63,10 +67,17 @@ def _clean_money(value: str) -> Decimal:
 def _fetch_with_firecrawl() -> str | None:
     try:
         client = FirecrawlClient(timeout=90)
-        results = client.search("Shimberg Florida Housing Rent Limits 2026 county AMI bedroom", limit=5)
-        logging.info("Firecrawl search returned %s results", len(results))
-        for result in results:
-            logging.info("Firecrawl result: %s %s", result.get("title"), result.get("url"))
+        queries = (
+            "Shimberg Florida Housing Rent Limits 2026 county AMI bedroom",
+            "Florida Housing Finance Corporation 2026 income rent limits effective May 1 2026",
+            "HUD 2026 HOME rent limits Florida Miami-Dade Broward Palm Beach",
+            "HUD 2026 MTSP income limits Florida Miami-Dade Broward Palm Beach",
+        )
+        for query in queries:
+            results = client.search(query, limit=5)
+            logging.info("Firecrawl search returned %s results for %s", len(results), query)
+            for result in results:
+                logging.info("Firecrawl result: %s %s", result.get("title"), result.get("url"))
         data = client.scrape(SHIMBERG_RESULTS_URL, formats=["markdown"])
         markdown = data.get("markdown") or ""
         if "Florida Housing Rent Limits" in markdown:
@@ -134,6 +145,12 @@ def parse_rent_limits(source_text: str, *, source_name: str) -> list[RentLimitRo
                     raw={
                         "source_line": line.strip(),
                         "fhfc_rent_limits_url": FHFC_RENT_LIMITS_URL,
+                        "fhfc_income_limits_url": FHFC_INCOME_LIMITS_URL,
+                        "hud_reference_urls": {
+                            "home_rent_limits": HUD_HOME_RENT_LIMITS_URL,
+                            "mtsp_income_limits": HUD_MTSP_LIMITS_URL,
+                            "fy2026_fmr_schedule": HUD_FMR_2026_URL,
+                        },
                         "note": "Shimberg page cites Florida Housing Finance Corporation combined income and rent limits.",
                     },
                 )
@@ -170,6 +187,12 @@ def parse_rent_limits(source_text: str, *, source_name: str) -> list[RentLimitRo
                     raw={
                         "source_payload": "serialized_shimberg_table",
                         "fhfc_rent_limits_url": FHFC_RENT_LIMITS_URL,
+                        "fhfc_income_limits_url": FHFC_INCOME_LIMITS_URL,
+                        "hud_reference_urls": {
+                            "home_rent_limits": HUD_HOME_RENT_LIMITS_URL,
+                            "mtsp_income_limits": HUD_MTSP_LIMITS_URL,
+                            "fy2026_fmr_schedule": HUD_FMR_2026_URL,
+                        },
                         "note": "Shimberg page cites Florida Housing Finance Corporation combined income and rent limits.",
                     },
                 )

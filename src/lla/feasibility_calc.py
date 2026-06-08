@@ -20,6 +20,7 @@ class FeasibilityInputs:
     bedrooms: int = 2
     affordable_ami_band: int = 120
     affordable_monthly_rent_override: Decimal | int | float | str | None = None
+    utilities_included: bool | str = False
     market_monthly_rent: Decimal | int | float | str | None = None
     vacancy_rate: Decimal | int | float | str = Decimal("0.05")
     opex_rate: Decimal | int | float | str = Decimal("0.35")
@@ -55,6 +56,14 @@ def _ratio(value: Decimal | None) -> float | None:
     if value is None:
         return None
     return float(value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+
+def _bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
 
 
 def _parcel_warning_context(parcel_context: dict[str, Any]) -> list[str]:
@@ -94,6 +103,7 @@ def calculate_feasibility(
     parcel_context: dict[str, Any],
     inputs: FeasibilityInputs,
     affordable_rent_limit: dict[str, Any] | None = None,
+    utility_allowance: dict[str, Any] | None = None,
     tax_exemption: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     warnings = _parcel_warning_context(parcel_context)
@@ -119,14 +129,46 @@ def calculate_feasibility(
         market_rent = Decimal("0")
 
     rent_source = "missing"
-    rent_limit_value = _decimal((affordable_rent_limit or {}).get("max_monthly_rent"))
+    utilities_included = _bool(inputs.utilities_included)
+    rent_limit_payload = affordable_rent_limit or {}
+    utility_payload = utility_allowance or {}
+    for warning in rent_limit_payload.get("warnings") or []:
+        warnings.append(str(warning))
+    for warning in utility_payload.get("warnings") or []:
+        warnings.append(str(warning))
+
+    gross_rent_limit = _decimal(rent_limit_payload.get("gross_rent_limit"))
+    if gross_rent_limit is None:
+        gross_rent_limit = _decimal(rent_limit_payload.get("max_monthly_rent"))
+    utility_allowance_value = _decimal(utility_payload.get("allowance_monthly"))
+    tenant_paid_rent_limit: Decimal | None = None
+
+    if gross_rent_limit and gross_rent_limit > 0:
+        if utilities_included:
+            tenant_paid_rent_limit = gross_rent_limit
+            utility_allowance_value = Decimal("0")
+            warnings.append("utilities_included_assumption")
+        elif utility_allowance_value is not None:
+            tenant_paid_rent_limit = max(gross_rent_limit - utility_allowance_value, Decimal("0"))
+        else:
+            warnings.append("utility_allowance_missing")
+
     affordable_rent = _decimal(inputs.affordable_monthly_rent_override)
     if affordable_rent and affordable_rent > 0:
         rent_source = "user_override"
         warnings.append("affordable_rent_user_override")
-    elif rent_limit_value and rent_limit_value > 0:
-        affordable_rent = rent_limit_value
-        rent_source = "stored_rent_limit"
+        if gross_rent_limit and gross_rent_limit > 0:
+            if utilities_included and affordable_rent > gross_rent_limit:
+                warnings.append("affordable_rent_override_exceeds_gross_limit")
+            elif utility_allowance_value is not None:
+                override_gross_rent = affordable_rent + utility_allowance_value
+                if tenant_paid_rent_limit is not None and affordable_rent > tenant_paid_rent_limit:
+                    warnings.append("affordable_rent_override_exceeds_tenant_paid_limit")
+                if override_gross_rent > gross_rent_limit:
+                    warnings.append("affordable_rent_override_exceeds_gross_limit")
+    elif tenant_paid_rent_limit and tenant_paid_rent_limit > 0:
+        affordable_rent = tenant_paid_rent_limit
+        rent_source = "stored_tenant_paid_rent_limit"
     else:
         affordable_rent = Decimal("0")
         warnings.append("affordable_rent_missing")
@@ -214,12 +256,17 @@ def calculate_feasibility(
             "market_share": _ratio(market_share),
             "bedrooms": inputs.bedrooms,
             "affordable_ami_band": inputs.affordable_ami_band,
+            "utilities_included": utilities_included,
         },
         "rents": {
             "market_monthly_rent": _money(market_rent),
             "affordable_monthly_rent": _money(affordable_rent),
             "affordable_rent_source": rent_source,
+            "gross_rent_limit": _money(gross_rent_limit),
+            "utility_allowance": _money(utility_allowance_value),
+            "tenant_paid_rent_limit": _money(tenant_paid_rent_limit),
             "rent_limit": affordable_rent_limit or {},
+            "utility_allowance_source": utility_allowance or {},
         },
         "income": {
             "gross_income": _money(gross_income),

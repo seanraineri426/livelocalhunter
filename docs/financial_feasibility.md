@@ -17,6 +17,39 @@ The ingestion script uses Firecrawl for discovery/scrape when available and a
 direct Shimberg fallback. Loaded rows store source URL, source label, effective
 date where known, and raw provenance in `lla.rent_limits`.
 
+Utility allowances:
+
+- Miami-Dade Housing Choice Voucher / PHCD program information:
+  https://mdvoucher.com/en-us/Pages/View/2/program-information
+- Miami-Dade 2025 centralized utility allowance schedule:
+  https://mdvoucher.com/Media/Shared/Documents/2025%20Utility%20Allowance%20Schedules.pdf
+- Broward County Housing Authority participant resources:
+  https://bchafl.org/ova_sev/participants/
+- Broward County Housing Authority 2026 utility allowance schedule:
+  https://bchafl.org/wp-content/uploads/2024/06/Utility-Allowance-Schedule-2026.pdf
+- West Palm Beach Housing Authority utility allowances:
+  https://www.wpbha.org/utility-allowances
+- West Palm Beach Housing Authority 2026 utility allowance schedule:
+  https://www.wpbha.org/utility/openPDF/wpbhfl/Utility_Allowance_Schedule__01.01.2026.pdf?alt=media
+- HUD Multifamily Utility Allowance Factors, used only as source context and
+  not as parcel-level allowance rows:
+  https://www.huduser.gov/portal/datasets/muaf.html
+
+`scripts/ingest_utility_allowances.py` uses Firecrawl discovery/scrape against
+official PHA PDFs and stores a conservative, explicit
+`all_tenant_paid_electric_apartment_baseline` profile. These rows are PHA or
+county schedule rows, not parcel-specific utility splits; feasibility emits
+warnings for that scope.
+
+HUD cross-check sources:
+
+- HUD HOME rent limits:
+  https://www.huduser.gov/portal/datasets/HOME-Rent-limits.html
+- HUD MTSP income limits:
+  https://www.huduser.gov/portal/datasets/mtsp.html
+- HUD FY 2026 Fair Market Rent schedule:
+  https://www.huduser.gov/portal/datasets/fmr/fmr2026/FY2026_FMR_Schedule.pdf
+
 Tax exemption legal basis:
 
 - Fla. Stat. 196.1978(3), current Senate statute page:
@@ -58,7 +91,10 @@ must not be treated as a verified local opt-out vote.
 ## Tables
 
 - `lla.rent_limits`: bedroom-specific rent limits by county, year, AMI band,
-  and bedroom count.
+  and bedroom count. These are treated as gross rent limits.
+- `lla.utility_allowances`: source-backed county/PHA utility allowance schedule
+  rows by year, bedroom count, unit type, utility profile, source URL, raw
+  provenance, and confidence.
 - `lla.millage`: existing table, extended with source URLs, jurisdiction name,
   effective date, raw JSON, and update timestamp.
 - `lla.parcel_scenarios`: parcel-level assumptions, deterministic feasibility
@@ -71,8 +107,8 @@ intact.
 
 ## Deterministic Calculators
 
-`src/lla/rent_limits.py` looks up stored rent-limit rows. It does not crawl at
-runtime.
+`src/lla/rent_limits.py` looks up stored rent-limit and utility allowance rows.
+It does not crawl at runtime.
 
 `src/lla/tax_exemption.py` estimates Missing Middle / Live Local ad valorem
 exemption value by authority. It distinguishes units at or below 80% AMI from
@@ -84,6 +120,8 @@ unit threshold data is missing.
 `src/lla/feasibility_calc.py` computes:
 
 - market and affordable unit split, defaulting to 60% market / 40% affordable;
+- affordable tenant-paid rent as gross rent limit minus stored utility allowance,
+  unless `utilities_included=true` is explicitly supplied;
 - gross income, vacancy, effective income, operating expense, and NOI;
 - supportable total project cost by required yield-on-cost;
 - hard costs by gross SF, per-unit, or total hard-cost basis;
@@ -113,6 +151,12 @@ Load current pilot-county rent limits:
 
 ```bash
 python scripts/ingest_rent_limits.py
+```
+
+Load pilot-county utility allowances:
+
+```bash
+python scripts/ingest_utility_allowances.py
 ```
 
 Load current pilot-county millage and adequate-supply context:
@@ -159,6 +203,15 @@ stored massing `max_units`, the calculator emits `total_units_exceeds_massing_ma
 
 - Market rent, hard costs, acquisition price, assessed value, and yield are
   user/human assumptions. The engine does not invent them.
+- Affordable rent limits are gross rent limits. If tenants pay utilities, the
+  calculator subtracts a stored utility allowance before using affordable rent
+  in gross income. If no utility allowance exists and `utilities_included=true`
+  was not explicit, the calculator emits `utility_allowance_missing` and does
+  not silently treat the allowance as zero.
+- Current utility allowance rows are PHA/county schedule baselines for common
+  apartment/multifamily all-tenant-paid electric profiles. Real underwriting
+  still needs the project utility split, owner-paid services, applicable PHA,
+  and housing-program compliance review.
 - Tax exemption output is a screening estimate. FHFC certification, property
   appraiser review, recorded restrictions, disqualifiers, and counsel review
   control real eligibility.

@@ -17,6 +17,7 @@ def context(**entitlement_overrides):
 def valid_inputs(**overrides):
     values = {
         "market_monthly_rent": 3000,
+        "utilities_included": True,
         "required_yield_on_cost": "0.065",
         "acquisition_price": 5_000_000,
         "gross_sf": 120_000,
@@ -28,6 +29,14 @@ def valid_inputs(**overrides):
 
 def rent_limit(value=2200):
     return {"max_monthly_rent": value, "source_url": "https://example.test/rent"}
+
+
+def utility_allowance(value=200):
+    return {
+        "allowance_monthly": value,
+        "source_url": "https://example.test/utility",
+        "warnings": ["utility_allowance_not_parcel_specific"],
+    }
 
 
 def test_basic_valid_gross_sf_hard_cost():
@@ -141,3 +150,43 @@ def test_user_units_above_massing_max_warns():
         affordable_rent_limit=rent_limit(),
     )
     assert "total_units_exceeds_massing_max_units" in result["warnings"]
+
+
+def test_utility_allowance_subtracted_from_gross_rent_limit():
+    result = calculate_feasibility(
+        parcel_context=context(),
+        inputs=valid_inputs(utilities_included=False),
+        affordable_rent_limit=rent_limit(2200),
+        utility_allowance=utility_allowance(175),
+    )
+    assert result["rents"]["gross_rent_limit"] == 2200
+    assert result["rents"]["utility_allowance"] == 175
+    assert result["rents"]["tenant_paid_rent_limit"] == 2025
+    assert result["rents"]["affordable_monthly_rent"] == 2025
+    assert result["rents"]["affordable_rent_source"] == "stored_tenant_paid_rent_limit"
+
+
+def test_missing_utility_allowance_warns_without_zero_subtraction():
+    result = calculate_feasibility(
+        parcel_context=context(),
+        inputs=valid_inputs(utilities_included=False),
+        affordable_rent_limit=rent_limit(2200),
+        utility_allowance={},
+    )
+    assert "utility_allowance_missing" in result["warnings"]
+    assert "affordable_rent_missing" in result["warnings"]
+    assert result["rents"]["tenant_paid_rent_limit"] is None
+    assert result["rents"]["affordable_monthly_rent"] == 0
+
+
+def test_override_above_tenant_paid_limit_warns():
+    result = calculate_feasibility(
+        parcel_context=context(),
+        inputs=valid_inputs(utilities_included=False, affordable_monthly_rent_override=2100),
+        affordable_rent_limit=rent_limit(2200),
+        utility_allowance=utility_allowance(175),
+    )
+    assert "affordable_rent_user_override" in result["warnings"]
+    assert "affordable_rent_override_exceeds_tenant_paid_limit" in result["warnings"]
+    assert "affordable_rent_override_exceeds_gross_limit" in result["warnings"]
+    assert result["rents"]["affordable_monthly_rent"] == 2100
