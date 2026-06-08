@@ -139,6 +139,10 @@
   width: 100%;
 }
 
+.map-shell .mapboxgl-ctrl-compass {
+  display: none;
+}
+
 .map-fallback {
   align-items: center;
   display: flex;

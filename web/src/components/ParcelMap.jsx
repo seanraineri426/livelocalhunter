@@ -8,6 +8,7 @@ const SOUTH_FLORIDA_CENTER = [-80.29, 26.02]
 const PARCEL_SOURCE_ID = 'selected-parcel'
 const PARCEL_FILL_LAYER_ID = 'selected-parcel-fill'
 const PARCEL_OUTLINE_LAYER_ID = 'selected-parcel-outline'
+const FLAT_CAMERA = { pitch: 0, bearing: 0 }
 
 function getCentroid(parcel) {
   const centroid = parcel?.centroid
@@ -51,6 +52,25 @@ function ensureParcelLayers(map) {
   }
 }
 
+function resetFlatCamera(map) {
+  map.setPitch(FLAT_CAMERA.pitch)
+  map.setBearing(FLAT_CAMERA.bearing)
+}
+
+function ensureFlatStyle(map) {
+  if (map.getTerrain()) map.setTerrain(null)
+  map.setProjection('mercator')
+
+  const layers = map.getStyle().layers || []
+  layers
+    .filter((layer) => layer.type === 'fill-extrusion' || layer.type === 'sky')
+    .forEach((layer) => {
+      if (map.getLayer(layer.id)) map.removeLayer(layer.id)
+    })
+
+  resetFlatCamera(map)
+}
+
 function collectCoordinatePairs(coordinates, pairs = []) {
   if (!Array.isArray(coordinates)) return pairs
   if (
@@ -92,12 +112,21 @@ export function ParcelMap({ context, geometry, geometryError, tone, loading, not
       style: 'mapbox://styles/mapbox/dark-v11',
       center: SOUTH_FLORIDA_CENTER,
       zoom: 8.4,
-      pitch: 48,
-      bearing: -12,
+      ...FLAT_CAMERA,
+      projection: 'mercator',
       antialias: true,
     })
-    mapRef.current.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'bottom-right')
-    mapRef.current.on('load', () => ensureParcelLayers(mapRef.current))
+    mapRef.current.dragRotate.disable()
+    mapRef.current.touchZoomRotate.disableRotation()
+    mapRef.current.keyboard.disableRotation()
+    mapRef.current.addControl(
+      new mapboxgl.NavigationControl({ showCompass: false, showZoom: true, visualizePitch: false }),
+      'bottom-right',
+    )
+    mapRef.current.on('load', () => {
+      ensureFlatStyle(mapRef.current)
+      ensureParcelLayers(mapRef.current)
+    })
 
     return () => {
       markerRef.current?.remove()
@@ -124,8 +153,7 @@ export function ParcelMap({ context, geometry, geometryError, tone, loading, not
     mapRef.current.flyTo({
       center: [centroid.lon, centroid.lat],
       zoom: 15.4,
-      pitch: 54,
-      bearing: -16,
+      ...FLAT_CAMERA,
       speed: 0.85,
       curve: 1.2,
       essential: true,
@@ -150,8 +178,7 @@ export function ParcelMap({ context, geometry, geometryError, tone, loading, not
         map.fitBounds(bounds, {
           padding: { top: 120, right: 90, bottom: 110, left: 90 },
           maxZoom: 17.2,
-          pitch: 42,
-          bearing: -12,
+          ...FLAT_CAMERA,
           duration: 950,
           essential: true,
         })

@@ -30,7 +30,7 @@ The Python virtual environment stays at the repository root, typically `.venv/`,
 
 ## Current Workspace
 
-- Mapbox GL dark map can identify parcels by click via `GET /parcels/identify?lng=&lat=`, then renders the selected parcel boundary from `GET /parcels/{parcel_id}/geometry`, with a subtle fill, bright outline, and bounds fit. If geometry is unavailable, it falls back to the centroid from `GET /parcels/{parcel_id}/context`.
+- Mapbox GL dark map stays in a flat, top-down parcel view with rotation, terrain, globe, and 3D extrusion effects disabled. It can identify parcels by click via `GET /parcels/identify?lng=&lat=`, then renders the selected parcel boundary from `GET /parcels/{parcel_id}/geometry`, with a subtle fill, bright outline, and bounds fit. If geometry is unavailable, it falls back to the centroid from `GET /parcels/{parcel_id}/context`.
 - Folio + county parcel command search. The first result loads automatically and fits the map to the selected parcel boundary when available.
 - Map clicks show `Identifying parcel...` while the point lookup runs and a subtle `No parcel found here` message when no stored polygon covers the clicked point. Search selection uses the same context + geometry load flow.
 - Marker color follows parcel status when only the centroid is available: eligible, needs review, ineligible, or unknown.
