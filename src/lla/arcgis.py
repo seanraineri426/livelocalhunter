@@ -99,6 +99,36 @@ def _positive(value: Any) -> float | None:
     return num
 
 
+def _clean_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    if not text_value or text_value.upper() in {"NULL", "NONE", "N/A", "NA"}:
+        return None
+    return text_value
+
+
+def _clean_zip(value: Any) -> str | None:
+    text_value = _clean_text(value)
+    if text_value is None:
+        return None
+    # Some sources store ZIP as a float (e.g. 33101.0); keep the leading 5 digits.
+    digits = "".join(ch for ch in text_value if ch.isdigit())
+    if not digits:
+        return None
+    return digits[:5]
+
+
+def extract_site_address(source: ParcelSource, props: dict[str, Any]) -> dict[str, Any]:
+    """Pull the physical site address fields configured for a parcel source."""
+
+    return {
+        "site_address": _clean_text(props.get(source.site_address_field)) if source.site_address_field else None,
+        "site_city": _clean_text(props.get(source.site_city_field)) if source.site_city_field else None,
+        "site_zip": _clean_zip(props.get(source.site_zip_field)) if source.site_zip_field else None,
+    }
+
+
 def normalize_feature(source: ParcelSource, feature: dict[str, Any]) -> dict[str, Any] | None:
     props = feature.get("properties") or {}
     parcel_id = props.get(source.id_field)
@@ -112,6 +142,8 @@ def normalize_feature(source: ParcelSource, feature: dict[str, Any]) -> dict[str
         acreage = lot_sf / 43560
     if lot_sf is None and acreage is not None:
         lot_sf = acreage * 43560
+
+    address = extract_site_address(source, props)
 
     return {
         "county_fips": source.county_fips,
@@ -127,6 +159,10 @@ def normalize_feature(source: ParcelSource, feature: dict[str, Any]) -> dict[str
         "candidate_reason": None,
         "normalized_use": None,
         "source": f"arcgis:{source.county_key}",
+        "site_address": address["site_address"],
+        "site_city": address["site_city"],
+        "site_zip": address["site_zip"],
+        "address_source": f"arcgis:{source.county_key}" if address["site_address"] else None,
     }
 
 
@@ -146,6 +182,11 @@ UPSERT_SQL = text(
         candidate_reason,
         normalized_use,
         source,
+        site_address,
+        site_city,
+        site_zip,
+        address_source,
+        address_updated_at,
         as_of_date,
         updated_at
     )
@@ -163,6 +204,11 @@ UPSERT_SQL = text(
         :candidate_reason,
         :normalized_use,
         :source,
+        :site_address,
+        :site_city,
+        :site_zip,
+        :address_source,
+        CASE WHEN :site_address IS NOT NULL THEN now() ELSE NULL END,
         CURRENT_DATE,
         now()
     )
@@ -179,6 +225,15 @@ UPSERT_SQL = text(
         candidate_reason = EXCLUDED.candidate_reason,
         normalized_use = EXCLUDED.normalized_use,
         source = EXCLUDED.source,
+        -- Preserve a previously captured address if this re-ingest lacks one.
+        site_address = COALESCE(EXCLUDED.site_address, lla.parcels.site_address),
+        site_city = COALESCE(EXCLUDED.site_city, lla.parcels.site_city),
+        site_zip = COALESCE(EXCLUDED.site_zip, lla.parcels.site_zip),
+        address_source = COALESCE(EXCLUDED.address_source, lla.parcels.address_source),
+        address_updated_at = CASE
+            WHEN EXCLUDED.site_address IS NOT NULL THEN now()
+            ELSE lla.parcels.address_updated_at
+        END,
         as_of_date = EXCLUDED.as_of_date,
         updated_at = now()
     """

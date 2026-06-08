@@ -26,6 +26,11 @@ function money(value) {
   return Number(value).toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 }
 
+function formatAddress(parcel) {
+  if (!parcel?.site_address) return ''
+  return [parcel.site_address, parcel.site_city, parcel.site_zip].filter(Boolean).join(', ')
+}
+
 function App() {
   const [folio, setFolio] = useState('')
   const [county, setCounty] = useState('miami_dade')
@@ -221,16 +226,20 @@ function App() {
           </form>
 
           <div className="results">
-            {results.map((parcel) => (
-              <button
-                className={parcel.parcel_id === selectedParcelId ? 'result selected' : 'result'}
-                key={parcel.parcel_id}
-                onClick={() => loadContext(parcel.parcel_id)}
-              >
-                <strong>{parcel.source_parcel_id}</strong>
-                <span>{parcel.county_fips} - {parcel.max_units || 'n/a'} max units - {parcel.eligible ? 'eligible' : 'review'}</span>
-              </button>
-            ))}
+            {results.map((parcel) => {
+              const address = formatAddress(parcel)
+              return (
+                <button
+                  className={parcel.parcel_id === selectedParcelId ? 'result selected' : 'result'}
+                  key={parcel.parcel_id}
+                  onClick={() => loadContext(parcel.parcel_id)}
+                >
+                  <strong>{parcel.source_parcel_id}</strong>
+                  {address && <span>{address}</span>}
+                  <span>{parcel.county_fips} - {parcel.max_units || 'n/a'} max units - {parcel.eligible ? 'eligible' : 'review'}</span>
+                </button>
+              )
+            })}
           </div>
         </aside>
 
@@ -240,28 +249,37 @@ function App() {
             {loading === 'context' && <span>Loading context...</span>}
           </div>
           {context ? (
-            <div className="cards">
-              <div className="mini-card">
-                <span>Eligibility</span>
-                <strong>{context.summary?.eligibility?.status || 'not computed'}</strong>
-                <small>{context.entitlement?.confidence || 'unknown'} confidence</small>
+            <>
+              <div className="parcel-header">
+                <div>
+                  <span>Folio</span>
+                  <strong>{context.parcel?.source_parcel_id}</strong>
+                </div>
+                {formatAddress(context.parcel) && <p>{formatAddress(context.parcel)}</p>}
               </div>
-              <div className="mini-card">
-                <span>Massing</span>
-                <strong>{context.entitlement?.max_units || 'n/a'} units</strong>
-                <small>{context.entitlement?.max_height_stories || 'n/a'} stories</small>
+              <div className="cards">
+                <div className="mini-card">
+                  <span>Eligibility</span>
+                  <strong>{context.summary?.eligibility?.status || 'not computed'}</strong>
+                  <small>{context.entitlement?.confidence || 'unknown'} confidence</small>
+                </div>
+                <div className="mini-card">
+                  <span>Massing</span>
+                  <strong>{context.entitlement?.max_units || 'n/a'} units</strong>
+                  <small>{context.entitlement?.max_height_stories || 'n/a'} stories</small>
+                </div>
+                <div className="mini-card">
+                  <span>Jurisdiction</span>
+                  <strong>{context.jurisdiction?.name || 'unknown'}</strong>
+                  <small>{context.jurisdiction_params?.params_version || 'params missing'}</small>
+                </div>
+                <div className="mini-card">
+                  <span>Market Rent Source</span>
+                  <strong>{money(context.latest_market_rent_source?.market_rent_monthly)}</strong>
+                  <small>{context.latest_market_rent_source?.source_type || 'not stored'}</small>
+                </div>
               </div>
-              <div className="mini-card">
-                <span>Jurisdiction</span>
-                <strong>{context.jurisdiction?.name || 'unknown'}</strong>
-                <small>{context.jurisdiction_params?.params_version || 'params missing'}</small>
-              </div>
-              <div className="mini-card">
-                <span>Market Rent Source</span>
-                <strong>{money(context.latest_market_rent_source?.market_rent_monthly)}</strong>
-                <small>{context.latest_market_rent_source?.source_type || 'not stored'}</small>
-              </div>
-            </div>
+            </>
           ) : (
             <p className="muted">Search and select a parcel to load eligibility, massing, flags, and provenance.</p>
           )}

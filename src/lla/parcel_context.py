@@ -83,6 +83,11 @@ def _fetch_parcel(
                 p.county_fips,
                 p.source_parcel_id,
                 p.source_parcel_id_normalized,
+                p.site_address,
+                p.site_city,
+                p.site_zip,
+                p.address_source,
+                p.address_updated_at,
                 p.acreage,
                 p.lot_sf,
                 ST_Area(p.geom::geography) * 10.76391041671 AS geom_area_sf,
@@ -362,7 +367,8 @@ def _summary_sections(
     return {
         "identity": (
             f"Parcel {parcel.get('parcel_id')} is folio/source parcel {folio} in "
-            f"{county}, {jurisdiction}."
+            f"{county}, {jurisdiction}"
+            f"{' at ' + parcel['site_address'] if parcel.get('site_address') else ''}."
         ),
         "eligibility": {
             "status": eligibility_state,
@@ -427,12 +433,12 @@ def build_parcel_context(
     """Build a JSON-safe parcel context packet.
 
     Lookup currently supports the internal ``parcel_id`` or county folio/source
-    parcel id. The database does not yet store a parcel address field; passing
-    ``address`` raises a clear error instead of performing fuzzy or invented lookup.
+    parcel id. Passing ``address`` raises a clear error instead of performing
+    fuzzy or invented lookup.
     """
 
     if address:
-        raise ParcelContextError("Address lookup is not available because parcels do not store address fields yet.")
+        raise ParcelContextError("Address lookup is not available; search by county folio/source parcel id.")
 
     engine = engine or get_engine()
     with engine.connect() as conn:
@@ -454,6 +460,11 @@ def build_parcel_context(
             "county": COUNTY_LABELS.get(parcel.get("county_fips"), parcel.get("county_fips")),
             "source_parcel_id": parcel.get("source_parcel_id"),
             "source_parcel_id_normalized": parcel.get("source_parcel_id_normalized"),
+            "site_address": parcel.get("site_address"),
+            "site_city": parcel.get("site_city"),
+            "site_zip": parcel.get("site_zip"),
+            "address_source": parcel.get("address_source"),
+            "address_updated_at": parcel.get("address_updated_at"),
             "acreage": parcel.get("acreage"),
             "lot_sf": parcel.get("lot_sf"),
             "geom_area_sf": parcel.get("geom_area_sf"),

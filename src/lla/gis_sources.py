@@ -17,6 +17,9 @@ class ParcelSource:
     zoning_field: str | None = None
     use_field: str | None = None
     use_desc_field: str | None = None
+    site_address_field: str | None = None
+    site_city_field: str | None = None
+    site_zip_field: str | None = None
     out_fields: tuple[str, ...] = ("*",)
     # geometry_only sources have polygons but lack engine attributes (use/lot/zoning)
     # and require a downstream attribute join before they are useful.
@@ -55,6 +58,9 @@ PARCEL_SOURCES: dict[str, ParcelSource] = {
         zoning_field="PRIMARY_ZONE",
         use_field="DOR_CODE_CUR",
         use_desc_field="DOR_DESC",
+        site_address_field="TRUE_SITE_ADDR",
+        site_city_field="TRUE_SITE_CITY",
+        site_zip_field="TRUE_SITE_ZIP_CODE",
         out_fields=(
             "FOLIO",
             "LOT_SIZE",
@@ -62,6 +68,8 @@ PARCEL_SOURCES: dict[str, ParcelSource] = {
             "DOR_CODE_CUR",
             "DOR_DESC",
             "TRUE_SITE_ADDR",
+            "TRUE_SITE_CITY",
+            "TRUE_SITE_ZIP_CODE",
             "TRUE_OWNER1",
         ),
     ),
@@ -77,6 +85,9 @@ PARCEL_SOURCES: dict[str, ParcelSource] = {
         lot_sf_field="LND_SQFOOT",
         zoning_field=None,
         use_field="DOR_UC",
+        site_address_field="PHY_ADDR1",
+        site_city_field="PHY_CITY",
+        site_zip_field="PHY_ZIPCD",
         out_fields=(
             "PARCELNO",
             "DOR_UC",
@@ -84,6 +95,7 @@ PARCEL_SOURCES: dict[str, ParcelSource] = {
             "OWN_NAME",
             "PHY_ADDR1",
             "PHY_CITY",
+            "PHY_ZIPCD",
         ),
         notes="Hosted BCPA parcel polygons joined to the FDOR NAL roll. DOR_UC = use code; no local zoning field.",
     ),
@@ -99,6 +111,9 @@ PARCEL_SOURCES: dict[str, ParcelSource] = {
         lot_sf_field=None,
         zoning_field=None,
         use_field="PROPERTY_USE",
+        site_address_field="SITE_ADDR_STR",
+        site_city_field="MUNICIPALITY",
+        site_zip_field="ZIP1",
         out_fields=(
             "PCN",
             "PROPERTY_USE",
@@ -106,6 +121,7 @@ PARCEL_SOURCES: dict[str, ParcelSource] = {
             "OWNER_NAME1",
             "SITE_ADDR_STR",
             "MUNICIPALITY",
+            "ZIP1",
         ),
         notes="Hosted PBC parcel polygons joined to property info. PROPERTY_USE is text; ACRES is often 0 and can be backfilled from geometry.",
     ),
