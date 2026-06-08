@@ -99,11 +99,18 @@ def estimate_exemption(
     threshold_met = affordable_mix.total_affordable_units >= MIN_MISSING_MIDDLE_UNITS
     for row in millage_rows:
         millage = _decimal(row.get("millage"))
-        opted_out = bool(row.get("opted_out_middle"))
+        opted_out = row.get("opted_out_middle")
+        if opted_out is None:
+            warnings.append(f"opt_out_unknown:{row.get('authority_name')}")
         if row.get("county_has_adequate_supply") is None:
             warnings.append(f"adequate_supply_unknown:{row.get('authority_name')}")
         exempt_80 = value_80 if threshold_met else Decimal("0")
-        exempt_120 = Decimal("0") if opted_out or not threshold_met else value_120 * Decimal("0.75")
+        if not threshold_met or opted_out is True:
+            exempt_120 = Decimal("0")
+        elif opted_out is False:
+            exempt_120 = value_120 * Decimal("0.75")
+        else:
+            exempt_120 = Decimal("0")
         exempt_value = exempt_80 + exempt_120
         tax_savings = exempt_value * millage / Decimal("1000")
         total_tax_savings += tax_savings

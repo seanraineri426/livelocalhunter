@@ -26,6 +26,26 @@ Tax exemption legal basis:
 - Florida Housing Coalition opt-out summary used as secondary interpretation:
   https://flhousing.org/wp-content/uploads/2024/03/FHC-Summary.-New-Multifamily-Middle-Market-Tax-Exemption-Opt-out-3.8.24.pdf
 
+Millage and opt-out ingestion sources:
+
+- Miami-Dade County Property Appraiser 2025 proposed millage table:
+  https://www.miamidadepa.gov/resources-pa/library/reports/millage/2025-proposed-millage-rate-table.pdf
+- Broward County Property Appraiser 2025 final millage table:
+  https://bcpa.net/Includes/Downloads/2025/2025%20Final%20Millage%20Rate%20Table.pdf
+- Palm Beach County Property Appraiser taxing authority code description:
+  https://pbcpao.gov/pdf/taxroll/Palm_Beach_County_Tax_Auth_Code_Description.pdf
+- Florida Housing Coalition Missing Middle opt-out eligibility summary:
+  https://flhousing.org/wp-content/uploads/2024/03/FHC-Summary.-New-Multifamily-Middle-Market-Tax-Exemption-Opt-out-3.8.24.pdf
+
+`scripts/ingest_millage.py` uses Firecrawl for source discovery/scrape first and falls back to
+direct official PDF parsing when Firecrawl markdown tables are not line-parseable. Loaded rows
+store `millage_source_url`, `opt_out_source_url` when applicable, `effective_date`, `raw`, and
+`jurisdiction_name`. `opted_out_middle` remains `null` unless a verified local opt-out
+resolution is ingested. For the three pilot counties, FHC lists taxing authorities as not
+eligible to opt out based on Shimberg adequate-supply analysis, so `county_has_adequate_supply`
+is stored as `true` with the FHC URL as provenance. This is screening context only, not a legal
+determination of a recorded opt-out vote.
+
 ## Tables
 
 - `lla.rent_limits`: bedroom-specific rent limits by county, year, AMI band,
@@ -86,6 +106,16 @@ Load current pilot-county rent limits:
 python scripts/ingest_rent_limits.py
 ```
 
+Load current pilot-county millage and adequate-supply context:
+
+```bash
+python scripts/ingest_millage.py
+```
+
+Use `--no-firecrawl` to force direct official PDF fetch. Logs are written to
+`/tmp/lla_millage_ingest.log`. The ingestion pass currently loads 2025 official millage rows;
+rerun feasibility with `--tax-year 2025` until 2026 certified tables are published.
+
 Run one parcel feasibility screen:
 
 ```bash
@@ -107,5 +137,10 @@ parcel-id path after a map click; no frontend was added in this pass.
   control real eligibility.
 - Authority-level opt-out treatment depends on loaded `lla.millage` rows. If
   opt-out or adequate-supply data is missing, the calculator emits warnings.
+- `opted_out_middle` is nullable. Unknown opt-out status is conservative: the
+  81-120% AMI tier is not applied until a verified non-opt-out is stored.
+- Hospital-district splits, DDA overlays, and special-district variants in county
+  TRIM tables may not map 1:1 to every parcel. Unmatched source rows are logged
+  during ingestion and remain human-review items.
 - The current stored rent rows cover pilot counties for 2026, AMI bands 80 and
   120, bedrooms 0-4.
