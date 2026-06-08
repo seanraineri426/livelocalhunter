@@ -5,6 +5,9 @@ import { formatAddress, markerColor } from '../lib/format'
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN
 const SOUTH_FLORIDA_CENTER = [-80.29, 26.02]
+const PARCEL_SOURCE_ID = 'selected-parcel'
+const PARCEL_FILL_LAYER_ID = 'selected-parcel-fill'
+const PARCEL_OUTLINE_LAYER_ID = 'selected-parcel-outline'
 
 function getCentroid(parcel) {
   const centroid = parcel?.centroid
@@ -14,11 +17,71 @@ function getCentroid(parcel) {
   return { lat, lon }
 }
 
-export function ParcelMap({ context, tone, loading }) {
+function ensureParcelLayers(map) {
+  if (!map.getSource(PARCEL_SOURCE_ID)) {
+    map.addSource(PARCEL_SOURCE_ID, {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+  }
+
+  if (!map.getLayer(PARCEL_FILL_LAYER_ID)) {
+    map.addLayer({
+      id: PARCEL_FILL_LAYER_ID,
+      type: 'fill',
+      source: PARCEL_SOURCE_ID,
+      paint: {
+        'fill-color': '#5eead4',
+        'fill-opacity': 0.18,
+      },
+    })
+  }
+
+  if (!map.getLayer(PARCEL_OUTLINE_LAYER_ID)) {
+    map.addLayer({
+      id: PARCEL_OUTLINE_LAYER_ID,
+      type: 'line',
+      source: PARCEL_SOURCE_ID,
+      paint: {
+        'line-color': '#f8fafc',
+        'line-opacity': 0.95,
+        'line-width': 3,
+      },
+    })
+  }
+}
+
+function collectCoordinatePairs(coordinates, pairs = []) {
+  if (!Array.isArray(coordinates)) return pairs
+  if (
+    coordinates.length >= 2
+    && Number.isFinite(Number(coordinates[0]))
+    && Number.isFinite(Number(coordinates[1]))
+  ) {
+    pairs.push([Number(coordinates[0]), Number(coordinates[1])])
+    return pairs
+  }
+  coordinates.forEach((item) => collectCoordinatePairs(item, pairs))
+  return pairs
+}
+
+function geometryBounds(geometry) {
+  const pairs = collectCoordinatePairs(geometry?.coordinates)
+  if (pairs.length === 0) return null
+  const bounds = pairs.reduce(
+    (currentBounds, coordinate) => currentBounds.extend(coordinate),
+    new mapboxgl.LngLatBounds(pairs[0], pairs[0]),
+  )
+  return bounds.isEmpty() ? null : bounds
+}
+
+export function ParcelMap({ context, geometry, geometryError, tone, loading }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markerRef = useRef(null)
   const centroid = useMemo(() => getCentroid(context?.parcel), [context])
+  const parcelGeometry = geometry?.geometry ? geometry : null
+  const hasOutline = Boolean(parcelGeometry?.geometry)
 
   useEffect(() => {
     if (!MAPBOX_TOKEN || !containerRef.current || mapRef.current) return
@@ -34,6 +97,7 @@ export function ParcelMap({ context, tone, loading }) {
       antialias: true,
     })
     mapRef.current.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'bottom-right')
+    mapRef.current.on('load', () => ensureParcelLayers(mapRef.current))
 
     return () => {
       markerRef.current?.remove()
@@ -44,7 +108,7 @@ export function ParcelMap({ context, tone, loading }) {
   }, [])
 
   useEffect(() => {
-    if (!mapRef.current || !centroid) return
+    if (!mapRef.current || !centroid || hasOutline) return
 
     const color = markerColor(tone)
     markerRef.current?.remove()
@@ -66,7 +130,40 @@ export function ParcelMap({ context, tone, loading }) {
       curve: 1.2,
       essential: true,
     })
-  }, [centroid, context, tone])
+  }, [centroid, context, hasOutline, tone])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    const updateGeometry = () => {
+      ensureParcelLayers(map)
+      const source = map.getSource(PARCEL_SOURCE_ID)
+      source?.setData(parcelGeometry || { type: 'FeatureCollection', features: [] })
+
+      if (!parcelGeometry?.geometry) return
+
+      markerRef.current?.remove()
+      markerRef.current = null
+      const bounds = geometryBounds(parcelGeometry.geometry)
+      if (bounds) {
+        map.fitBounds(bounds, {
+          padding: { top: 120, right: 90, bottom: 110, left: 90 },
+          maxZoom: 17.2,
+          pitch: 42,
+          bearing: -12,
+          duration: 950,
+          essential: true,
+        })
+      }
+    }
+
+    if (map.isStyleLoaded()) {
+      updateGeometry()
+    } else {
+      map.once('load', updateGeometry)
+    }
+  }, [parcelGeometry])
 
   if (!MAPBOX_TOKEN) {
     return (
@@ -94,8 +191,16 @@ export function ParcelMap({ context, tone, loading }) {
         </div>
       </div>
       <div className="map-overlay bottom">
-        <span>{loading === 'context' ? 'Loading parcel context...' : 'Marker MVP: parcel centroid'}</span>
-        <span>Polygons/vector tiles deferred</span>
+        <span>
+          {loading === 'context'
+            ? 'Loading parcel context...'
+            : hasOutline
+              ? 'Selected parcel outline'
+              : geometryError
+                ? 'Geometry unavailable'
+                : 'Centroid marker'}
+        </span>
+        <span>{hasOutline ? 'Fitted to boundary' : 'Boundary loads per selected parcel'}</span>
       </div>
     </section>
   )

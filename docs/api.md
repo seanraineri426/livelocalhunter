@@ -20,6 +20,7 @@ The app reads `DATABASE_URL`, `OPENROUTER_API_KEY`, and optional `OPENROUTER_MOD
 
 - `GET /health`
 - `GET /parcels/search?folio=&county=`
+- `GET /parcels/{parcel_id}/geometry`
 - `GET /parcels/{parcel_id}/context`
 - `GET /parcels/{parcel_id}/massing-audit?use_ai=false`
 - `POST /parcels/{parcel_id}/massing-audit`
@@ -31,6 +32,12 @@ The app reads `DATABASE_URL`, `OPENROUTER_API_KEY`, and optional `OPENROUTER_MOD
 - `POST /parcels/{parcel_id}/scenarios`
 - `PATCH /parcels/{parcel_id}/status`
 - `POST /parcels/{parcel_id}/notes`
+
+## Parcel Geometry
+
+`GET /parcels/{parcel_id}/geometry` returns one GeoJSON `Feature` for the selected parcel only. It reads `lla.parcels.geom`, emits EPSG:4326 GeoJSON via PostGIS, and includes only display-safe properties: parcel id, folio, eligibility/status, address, city/zip, and candidate summary fields.
+
+The endpoint is intentionally per-parcel for the current Mapbox UI. It does not bulk-load parcel polygons; viewport-wide parcel layers should use a dedicated vector tile or bounded spatial endpoint.
 
 ## Assumption Flow
 

@@ -441,6 +441,8 @@ function App() {
   const [results, setResults] = useState([])
   const [selectedParcelId, setSelectedParcelId] = useState('')
   const [context, setContext] = useState(null)
+  const [parcelGeometry, setParcelGeometry] = useState(null)
+  const [geometryError, setGeometryError] = useState('')
   const [templates, setTemplates] = useState([])
   const [templateName, setTemplateName] = useState('base_case')
   const [assumptions, setAssumptions] = useState({
@@ -502,14 +504,21 @@ function App() {
 
   async function loadContext(parcelId) {
     setSelectedParcelId(parcelId)
+    setParcelGeometry(null)
+    setGeometryError('')
     setLoading('context')
     setError('')
     try {
-      const [contextData, auditData] = await Promise.all([
+      const [contextData, auditData, geometryData] = await Promise.all([
         api(`/parcels/${parcelId}/context`),
         api(`/parcels/${parcelId}/massing-audit`),
+        api(`/parcels/${parcelId}/geometry`).catch((err) => {
+          setGeometryError(err.message)
+          return null
+        }),
       ])
       setContext(contextData)
+      setParcelGeometry(geometryData?.geometry ? geometryData : null)
       setMassingAudit(auditData.massing_audit)
       setFeasibility(null)
       setCostAudit(null)
@@ -650,7 +659,13 @@ function App() {
 
       <section className="workspace-grid">
         <div className="map-column">
-          <ParcelMap context={context} tone={tone} loading={loading} />
+          <ParcelMap
+            context={context}
+            geometry={parcelGeometry}
+            geometryError={geometryError}
+            tone={tone}
+            loading={loading}
+          />
           <SearchPanel
             county={county}
             folio={folio}

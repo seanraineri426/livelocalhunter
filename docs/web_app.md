@@ -30,9 +30,9 @@ The Python virtual environment stays at the repository root, typically `.venv/`,
 
 ## Current Workspace
 
-- Mapbox GL dark map centered on the selected parcel centroid from `GET /parcels/{parcel_id}/context`.
-- Folio + county parcel command search. The first result loads automatically and flies the map to the stored centroid.
-- Marker color follows parcel status: eligible, needs review, ineligible, or unknown.
+- Mapbox GL dark map renders the selected parcel boundary from `GET /parcels/{parcel_id}/geometry`, with a subtle fill, bright outline, and bounds fit. If geometry is unavailable, it falls back to the centroid from `GET /parcels/{parcel_id}/context`.
+- Folio + county parcel command search. The first result loads automatically and fits the map to the selected parcel boundary when available.
+- Marker color follows parcel status when only the centroid is available: eligible, needs review, ineligible, or unknown.
 - Parcel intelligence header for address, folio, county, jurisdiction, eligibility, confidence, and audit state.
 - Known / Estimated / Needs Verification source context strip for analyst confidence.
 - Massing Sanity / Zoning Audit card with deterministic flags loaded automatically and an explicit AI reviewer button.
@@ -46,4 +46,4 @@ The massing audit card reinforces that AI is a reviewer, not the calculator. Det
 
 ## Deferred
 
-Parcel polygons/vector tiles are deferred until there is a stable frontend-safe geometry endpoint or tile source. The current Mapbox slice uses the parcel centroid already returned in the parcel context packet and does not add backend geometry routes.
+Viewport-wide parcel polygons, vector tiles, and map-click parcel identify are deferred. The current map loads only the selected parcel geometry so it remains responsive and avoids bulk polygon transfer.

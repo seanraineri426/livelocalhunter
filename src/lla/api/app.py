@@ -81,6 +81,24 @@ def _json_param(payload: dict[str, Any] | None) -> str | None:
     return json.dumps(payload, default=json_default) if payload is not None else None
 
 
+def _loads_geojson_geometry(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    return json.loads(value)
+
+
+def _parcel_status(row: dict[str, Any]) -> str:
+    if row.get("review_status"):
+        return row["review_status"]
+    if row.get("eligible") is True:
+        return "eligible"
+    if row.get("eligible") is False:
+        return "ineligible"
+    return "unknown"
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -136,6 +154,61 @@ def search_parcels(
             },
         ).mappings()
         return {"results": [dict(row) for row in rows]}
+
+
+@app.get("/parcels/{parcel_id}/geometry")
+def parcel_geometry(parcel_id: str) -> dict[str, Any]:
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT
+                    p.parcel_id::text,
+                    p.source_parcel_id AS folio,
+                    p.site_address,
+                    p.site_city,
+                    p.site_zip,
+                    p.is_candidate,
+                    p.candidate_bucket,
+                    e.eligible,
+                    rs.review_status,
+                    CASE
+                        WHEN p.geom IS NULL OR ST_IsEmpty(p.geom) THEN NULL
+                        WHEN ST_SRID(p.geom) = 4326 THEN ST_AsGeoJSON(p.geom)
+                        WHEN ST_SRID(p.geom) = 0 THEN ST_AsGeoJSON(ST_SetSRID(p.geom, 4326))
+                        ELSE ST_AsGeoJSON(ST_Transform(p.geom, 4326))
+                    END AS geometry
+                FROM lla.parcels p
+                LEFT JOIN lla.entitlement e ON e.parcel_id = p.parcel_id
+                LEFT JOIN lla.parcel_review_status rs ON rs.parcel_id = p.parcel_id
+                WHERE p.parcel_id = CAST(:parcel_id AS uuid)
+                ORDER BY p.as_of_date DESC NULLS LAST, p.updated_at DESC
+                LIMIT 1
+                """
+            ),
+            {"parcel_id": parcel_id},
+        ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Parcel not found.")
+
+    data = dict(row)
+    return {
+        "type": "Feature",
+        "geometry": _loads_geojson_geometry(data.pop("geometry")),
+        "properties": {
+            "parcel_id": data["parcel_id"],
+            "folio": data.get("folio"),
+            "eligible": data.get("eligible"),
+            "status": _parcel_status(data),
+            "address": data.get("site_address"),
+            "city": data.get("site_city"),
+            "zip": data.get("site_zip"),
+            "is_candidate": data.get("is_candidate"),
+            "candidate_bucket": data.get("candidate_bucket"),
+        },
+    }
 
 
 @app.get("/parcels/{parcel_id}/context")

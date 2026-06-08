@@ -77,6 +77,64 @@ def test_massing_audit_endpoint_uses_context(monkeypatch):
     assert response.json()["massing_audit"]["deterministic"]["sanity_status"] == "ok"
 
 
+def test_parcel_geometry_endpoint_returns_feature(monkeypatch):
+    row = {
+        "parcel_id": "00000000-0000-0000-0000-000000000000",
+        "folio": "3530210010010",
+        "site_address": "123 Main St",
+        "site_city": "Doral",
+        "site_zip": "33178",
+        "is_candidate": True,
+        "candidate_bucket": "commercial",
+        "eligible": True,
+        "review_status": None,
+        "geometry": '{"type":"Polygon","coordinates":[[[-80.1,25.9],[-80.0,25.9],[-80.0,26.0],[-80.1,25.9]]]}',
+    }
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return row
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, _query, params):
+            assert params["parcel_id"] == row["parcel_id"]
+            return FakeResult()
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr(api_app, "get_engine", lambda: FakeEngine())
+    client = TestClient(api_app.app)
+
+    response = client.get(f"/parcels/{row['parcel_id']}/geometry")
+
+    assert response.status_code == 200
+    feature = response.json()
+    assert feature["type"] == "Feature"
+    assert feature["geometry"]["type"] == "Polygon"
+    assert feature["properties"] == {
+        "parcel_id": row["parcel_id"],
+        "folio": row["folio"],
+        "eligible": True,
+        "status": "eligible",
+        "address": row["site_address"],
+        "city": row["site_city"],
+        "zip": row["site_zip"],
+        "is_candidate": True,
+        "candidate_bucket": "commercial",
+    }
+
+
 def test_massing_audit_post_passes_ai_options(monkeypatch):
     calls = {}
 
