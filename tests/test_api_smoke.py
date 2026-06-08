@@ -135,6 +135,44 @@ def test_parcel_geometry_endpoint_returns_feature(monkeypatch):
     }
 
 
+
+
+def test_search_parcels_accepts_county_slug_variants(monkeypatch):
+    calls = {}
+
+    class FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def __iter__(self):
+            return iter(self._rows)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, _query, params):
+            calls.update(params)
+            return FakeResult([])
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr(api_app, "get_engine", lambda: FakeEngine())
+    client = TestClient(api_app.app)
+
+    for county in ("Broward", "broward", "miami_dade", "Miami-Dade", "12086"):
+        calls.clear()
+        response = client.get(f"/parcels/search?county={county}&folio=3530210010010")
+        assert response.status_code == 200
+        assert calls["county_fips"] in {"12011", "12086"}
 def test_identify_parcel_endpoint_returns_compact_match(monkeypatch):
     row = {
         "parcel_id": "00000000-0000-0000-0000-000000000000",

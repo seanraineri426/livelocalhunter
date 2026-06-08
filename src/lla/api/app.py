@@ -74,7 +74,12 @@ class NoteCreateRequest(BaseModel):
 def _county_fips(county: str | None) -> str | None:
     if not county:
         return None
-    return COUNTY_FIPS.get(county, county)
+    normalized = county.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in COUNTY_FIPS:
+        return COUNTY_FIPS[normalized]
+    if county.isdigit():
+        return county
+    return None
 
 
 def _json_param(payload: dict[str, Any] | None) -> str | None:

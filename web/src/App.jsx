@@ -496,6 +496,11 @@ function App() {
       setResults(nextResults)
       if (nextResults.length > 0) {
         await loadContext(nextResults[0].parcel_id)
+      } else {
+        setSelectedParcelId('')
+        setContext(null)
+        setParcelGeometry(null)
+        setMapNotice('No parcels matched this search')
       }
     } catch (err) {
       setError(err.message)
