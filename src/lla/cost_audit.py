@@ -22,6 +22,14 @@ unsupported assumptions, and places where human underwriting or counsel must
 review the deterministic calculator output."""
 
 
+def _json_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
 def _fallback(reason: str) -> dict[str, Any]:
     return {
         "status": "unavailable",
@@ -81,8 +89,8 @@ def audit_cost_assumptions(
         return _fallback("OpenRouter JSON was not an object")
     return {
         "status": str(parsed.get("status") or "reviewed"),
-        "findings": list(parsed.get("findings") or []),
-        "missing_inputs": list(parsed.get("missing_inputs") or []),
-        "caveats": list(parsed.get("caveats") or []),
+        "findings": _json_list(parsed.get("findings")),
+        "missing_inputs": _json_list(parsed.get("missing_inputs")),
+        "caveats": _json_list(parsed.get("caveats")),
         "model": selected_model,
     }
