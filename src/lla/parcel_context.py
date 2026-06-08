@@ -238,6 +238,32 @@ def _fetch_excluded_intersections(conn: Connection, parcel_id: str) -> list[dict
     return [dict(row) for row in rows]
 
 
+def _fetch_latest_scenario(conn: Connection, parcel_id: str) -> dict[str, Any] | None:
+    if conn.execute(text("SELECT to_regclass('lla.parcel_scenarios')")).scalar() is None:
+        return None
+    row = conn.execute(
+        text(
+            """
+            SELECT
+                scenario_id::text,
+                scenario_name,
+                status,
+                feasibility_output_jsonb,
+                tax_exemption_output_jsonb,
+                cost_audit_jsonb,
+                created_at,
+                updated_at
+            FROM lla.parcel_scenarios
+            WHERE parcel_id = CAST(:parcel_id AS uuid)
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ),
+        {"parcel_id": parcel_id},
+    ).mappings().first()
+    return dict(row) if row else None
+
+
 def _data_gaps(parcel: dict[str, Any], zoning: list[dict[str, Any]], excluded: list[dict[str, Any]]) -> list[str]:
     gaps: list[str] = []
     if not parcel.get("jurisdiction_id"):
@@ -361,6 +387,7 @@ def build_parcel_context(
         parcel = _fetch_parcel(conn, parcel_id=parcel_id, folio=folio, county=county)
         matched_zoning = _fetch_matched_zoning(conn, parcel)
         excluded_intersections = _fetch_excluded_intersections(conn, parcel["parcel_id"])
+        latest_scenario = _fetch_latest_scenario(conn, parcel["parcel_id"])
 
     data_gaps = _data_gaps(parcel, matched_zoning, excluded_intersections)
     summary = _summary_sections(parcel, matched_zoning, excluded_intersections, data_gaps)
@@ -436,6 +463,7 @@ def build_parcel_context(
             "massing_flags": parcel.get("massing_flags") or [],
             "massing_inputs": parcel.get("massing_inputs") or {},
         },
+        "latest_scenario": latest_scenario,
         "summary": summary,
     }
     return _jsonable(context)

@@ -1,6 +1,6 @@
 # Parcel Chat Usage
 
-`scripts/chat_parcel.py` opens an interactive chat over one Live Local parcel context packet. The chat layer is grounded in stored parcel, eligibility, massing, zoning, jurisdiction, exclusion, and provenance fields; it should explain those facts and identify verification items, not invent legal, zoning, financial, or feasibility conclusions.
+`scripts/chat_parcel.py` opens an interactive chat over one Live Local parcel context packet. The chat layer is grounded in stored parcel, eligibility, massing, zoning, jurisdiction, exclusion, provenance fields, and the latest saved financial scenario when one exists; it should explain those facts and identify verification items, not invent legal, zoning, financial, or feasibility conclusions.
 
 ## Requirements
 
@@ -48,3 +48,7 @@ python scripts/chat_parcel.py --parcel-id <parcel_uuid> --model openai/gpt-4o-mi
 The assistant system prompt requires the model to use the parcel context JSON as the only factual source. If the context is missing a fact, the assistant should say the fact is missing and explain what counsel, zoning staff, or an analyst should verify.
 
 Interactive chat logs are written to `/tmp/lla_parcel_chat.log` for debugging.
+
+Financial scenario assumptions and outputs are produced by deterministic code in
+`src/lla/feasibility_calc.py`. The optional cost audit in `src/lla/cost_audit.py`
+is advisory JSON and must not be treated as a recalculation or legal/tax opinion.

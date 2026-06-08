@@ -137,7 +137,7 @@ computed_at`
 - required_parking = base_parking × 0.85 if within 0.25 mi of a transit stop
 - mixed-use: nonresidential ≤ 10% of total SF
 
-**Tax exemption** (see `missing_middle_exemption.py`):
+**Tax exemption** (see `src/lla/tax_exemption.py`):
 - needs ≥71 units serving ≤120% AMI
 - 100% exemption for units ≤80% AMI (never opt-out-able)
 - 75% exemption for units 81–120% AMI (a taxing authority can opt out of ITS share
@@ -145,11 +145,11 @@ computed_at`
 - computed per taxing authority, not on a blended millage
 - disqualifiers: Ch. 420 LURA or existing s.196.1979 local exemption
 
-**Feasibility**:
-- affordable_rent = min(FHFC limit at band, 0.90 × market rent)
+**Feasibility** (see `src/lla/feasibility_calc.py`):
+- affordable_rent = stored FHFC/Shimberg rent limit unless explicitly overridden
 - gross rent → less vacancy & operating expenses (exemption cuts the tax line) → NOI
-- stabilized_value = NOI ÷ exit_cap_rate
-- spread_bps = (NOI ÷ total_development_cost − exit_cap_rate) × 10,000
+- supportable total project cost = NOI ÷ required yield-on-cost
+- supportable land value = supportable total project cost − TDC excluding land
 - screen, not an appraisal — sorts which parcels deserve a real model
 
 ---
