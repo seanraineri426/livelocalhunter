@@ -150,7 +150,7 @@ def backfill_county(engine, county_key: str, *, batch_size: int, refresh: bool, 
         logging.info("%s has no site address field configured; skipping", county_key)
         return {"county": county_key, "candidates": 0, "matched": 0, "updated": 0}
 
-    where_missing = "" if refresh else "AND site_address IS NULL"
+    where_missing = "" if refresh else "AND site_address IS NULL AND site_city IS NULL AND site_zip IS NULL"
     with engine.connect() as conn:
         ids = conn.execute(
             text(
