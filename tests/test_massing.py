@@ -108,6 +108,7 @@ def _doral_megaparcel_row():
         "max_density_du_ac": Decimal("75"),
         "max_far": Decimal("1.5"),
         "base_parking_per_unit": Decimal("1.5"),
+        "zoning_code": "6119",
         "subject_zoning_matched": False,
         "confidence": "medium",
     }
@@ -120,8 +121,12 @@ def test_doral_megaparcel_no_longer_pure_density_product():
     assert result.max_units == result.massing_inputs["envelope_limited_units"]
     assert result.massing_inputs["binding_constraint"] == "footprint_height"
     assert "oversized_parcel_review_required" in result.massing_flags
+    assert "manual_site_boundary_required" in result.massing_flags
+    assert "parcel_zoning_unmatched_review_required" in result.massing_flags
+    assert result.massing_inputs["parcel_zoning_match"] == "missing_or_unmatched"
+    assert result.massing_inputs["land_category_reason"] == "no commercial/industrial/mixed-use signal"
     # Oversized aggregate tracts must not be marked high confidence.
-    assert result.confidence in {"low", "medium"}
+    assert result.confidence == "low"
 
 
 def test_compute_massing_records_binding_constraint_and_buildable_cap():

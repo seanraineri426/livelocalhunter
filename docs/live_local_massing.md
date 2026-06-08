@@ -27,6 +27,11 @@ Secondary interpretation checked for implementation context:
 - Eligibility premise: massing is only written for rows already marked eligible by
   the eligibility engine under the commercial, industrial, mixed-use, qualifying
   flexible-zoning/PUD, and exclusion-area screens.
+- Parcel zoning premise: the eligibility/context path now favors parcel-specific
+  zoning/FLU signals when they are present. Current use and candidate buckets can
+  explain why a parcel was screened in, but if the subject zoning cannot be
+  matched or clearly categorized the massing output is flagged for review rather
+  than treated as a zoning-grounded entitlement.
 - Density: use the highest density in the local government where residential
   development is allowed, excluding unavailable bonus/variance/special-exception
   values to the extent the extracted zoning rows distinguish them. The 2025
@@ -87,7 +92,9 @@ modeling is out of scope.
 Parcels larger than `OVERSIZED_PARCEL_ACRES` (default 50 acres) are almost always
 aggregate tracts (whole sections, golf courses, government land) rather than a
 single development site; they are flagged `oversized_parcel_review_required` and
-their confidence is degraded to `low`.
+`manual_site_boundary_required`, and their confidence is degraded to `low`. The
+unit count remains an arithmetic screen, but the UI/context presents it as
+review-required until a developable site boundary or subdivision parcel is used.
 
 When zoning is unmatched or envelope inputs are defaulted, confidence is degraded
 (to `medium` for defaulted envelope inputs, to `low` for oversized parcels or
@@ -117,3 +124,9 @@ missing jurisdiction params).
 `lla.entitlement.massing_inputs` records the numeric inputs used for the massing
 calculation. Confidence is degraded when statutory fields are defaulted or the
 height/historic inputs are approximate.
+
+`massing_inputs.subject_zoning`, `parcel_zoning_match`,
+`parcel_zoning_confidence`, `land_category_reason`, `binding_constraint`,
+`avg_unit_net_sf`, and `unit_gross_efficiency` are included so downstream UI and
+LLM context can distinguish a zoning-grounded parcel from a current-use candidate
+or aggregate tract that needs manual review.

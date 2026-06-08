@@ -218,6 +218,15 @@ small {
   padding: 12px 14px;
 }
 
+.warning {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 12px;
+  color: #92400e;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+}
+
 .result-card {
   display: grid;
   gap: 10px;

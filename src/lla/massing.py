@@ -12,6 +12,8 @@ from psycopg2.extras import Json, execute_values
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from lla.use_crosswalk import categorize_land_use, parcel_zoning_land_use
+
 
 PARAMS_VERSION = "live-local-4.0-2025"
 
@@ -459,11 +461,35 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
         flags.append("parking_defaulted")
     if row.get("zoning_geometry_available") is not True:
         flags.append("height_within_1mi_uses_jurisdiction_rollup")
-    if row.get("subject_zoning_matched") is not True:
+    subject_zoning_matched = row.get("subject_zoning_matched") is True
+    if not subject_zoning_matched:
         flags.append("subject_zoning_height_not_matched")
+        if row.get("zoning_code") or row.get("zoning_map_zone"):
+            flags.append("parcel_zoning_unmatched_review_required")
     if row.get("historic_height_data_available") is not True:
         flags.append("historic_height_screen_missing")
     flags.extend(("major_transportation_hub_input_missing", "available_parking_input_missing", "tod_area_input_missing"))
+
+    land_use = categorize_land_use(row)
+    parcel_zoning = parcel_zoning_land_use(row)
+    parcel_zoning_match = (
+        "matched_zoning_district"
+        if subject_zoning_matched
+        else "parcel_zoning_signal"
+        if parcel_zoning
+        else "missing_or_unmatched"
+    )
+    parcel_zoning_confidence = (
+        str(row.get("subject_zoning_confidence") or "medium")
+        if subject_zoning_matched
+        else parcel_zoning.confidence
+        if parcel_zoning
+        else "low"
+    )
+    if not parcel_zoning and not subject_zoning_matched:
+        flags.append("parcel_zoning_qualification_unverified")
+    if land_use.reason.startswith(("candidate_bucket=", "normalized_use=")):
+        flags.append("land_category_from_current_use_or_candidate_bucket")
 
     one_mile_height_ft = _decimal(row.get("height_1mi_ft"))
     one_mile_height_stories = _decimal(row.get("height_1mi_stories"))
@@ -509,7 +535,7 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
         front_setback_ft=row.get("subject_front_setback_ft"),
         side_setback_ft=row.get("subject_side_setback_ft"),
         rear_setback_ft=row.get("subject_rear_setback_ft"),
-        zoning_matched=bool(row.get("subject_zoning_matched")),
+        zoning_matched=subject_zoning_matched,
     )
     max_units = reconciliation.max_units
     buildable_sf = reconciliation.buildable_sf
@@ -518,6 +544,7 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
 
     if acreage > OVERSIZED_PARCEL_ACRES:
         flags.append("oversized_parcel_review_required")
+        flags.append("manual_site_boundary_required")
 
     missing_params = (
         row.get("jurisdiction_params_missing")
@@ -537,6 +564,9 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
             "lot_coverage_defaulted",
             "setbacks_defaulted",
             "envelope_uses_default_lot_coverage",
+            "parcel_zoning_unmatched_review_required",
+            "parcel_zoning_qualification_unverified",
+            "land_category_from_current_use_or_candidate_bucket",
         )
     ):
         confidence = _lowest_confidence(confidence, "medium")
@@ -556,6 +586,21 @@ def compute_massing(row: dict[str, Any]) -> MassingResult:
         "within_quarter_mile_transit": bool(row.get("within_quarter_mile_transit")),
         "zoning_geometry_available": bool(row.get("zoning_geometry_available")),
         "historic_height_data_available": bool(row.get("historic_height_data_available")),
+        "subject_zoning": {
+            "zoning_code": row.get("zoning_code"),
+            "zoning_map_zone": row.get("zoning_map_zone"),
+            "matched": subject_zoning_matched,
+            "match_source": row.get("subject_zoning_match_source"),
+            "district_code": row.get("subject_district_code"),
+            "district_name": row.get("subject_district_name"),
+            "category": row.get("subject_zoning_category"),
+            "confidence": row.get("subject_zoning_confidence"),
+        },
+        "parcel_zoning_match": parcel_zoning_match,
+        "parcel_zoning_confidence": parcel_zoning_confidence,
+        "land_category": land_use.category,
+        "land_category_reason": land_use.reason,
+        "land_category_confidence": land_use.confidence,
         # --- Building-envelope reconciliation audit trail ---
         "binding_constraint": reconciliation.binding_constraint,
         "max_height_stories": str(height_stories),
@@ -667,7 +712,15 @@ def fetch_eligible_massing_batch(
                     COALESCE(p.lot_sf, ST_Area(p.geom::geography) * 10.76391041671) AS lot_sf,
                     p.jurisdiction_id,
                     p.zoning_code,
+                    p.use_class,
+                    p.candidate_bucket,
+                    p.candidate_reason,
+                    p.normalized_use,
+                    p.zoning_general_use,
                     p.zoning_map_zone,
+                    p.zoning_map_description,
+                    p.zoning_rescue,
+                    p.flu_class,
                     p.geom,
                     e.confidence,
                     jp.max_density_du_ac,
@@ -705,6 +758,21 @@ def fetch_eligible_massing_batch(
                 sz.front_setback_ft AS subject_front_setback_ft,
                 sz.side_setback_ft AS subject_side_setback_ft,
                 sz.rear_setback_ft AS subject_rear_setback_ft,
+                sz.district_code AS subject_district_code,
+                sz.district_name AS subject_district_name,
+                sz.category AS subject_zoning_category,
+                sz.confidence AS subject_zoning_confidence,
+                sz.match_source AS subject_zoning_match_source,
+                b.zoning_code,
+                b.use_class,
+                b.candidate_bucket,
+                b.candidate_reason,
+                b.normalized_use,
+                b.zoning_general_use,
+                b.zoning_map_zone,
+                b.zoning_map_description,
+                b.zoning_rescue,
+                b.flu_class,
                 (sz.district_id IS NOT NULL) AS subject_zoning_matched,
                 false AS zoning_geometry_available,
                 false AS historic_height_data_available,
@@ -715,9 +783,15 @@ def fetch_eligible_massing_batch(
                 b.jurisdiction_params_missing
             FROM batch b
             LEFT JOIN LATERAL (
-                SELECT z.district_id, z.max_height_ft, z.max_height_stories,
+                SELECT z.district_id, z.district_code, z.district_name, z.category,
+                       z.confidence, z.max_height_ft, z.max_height_stories,
                        z.max_lot_coverage, z.min_lot_sf,
-                       z.front_setback_ft, z.side_setback_ft, z.rear_setback_ft
+                       z.front_setback_ft, z.side_setback_ft, z.rear_setback_ft,
+                       CASE
+                           WHEN lower(trim(z.district_code)) = lower(trim(coalesce(b.zoning_code, ''))) THEN 'parcel.zoning_code'
+                           WHEN lower(trim(z.district_code)) = lower(trim(coalesce(b.zoning_map_zone, ''))) THEN 'parcel.zoning_map_zone'
+                           ELSE 'jurisdiction_context'
+                       END AS match_source
                 FROM lla.zoning_districts z
                 WHERE z.jurisdiction_id = b.jurisdiction_id
                   AND lower(trim(z.district_code)) IN (

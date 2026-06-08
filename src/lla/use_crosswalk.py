@@ -82,6 +82,20 @@ _NON_LLA_TERMS = (
     "WATER",
 )
 
+_ZONING_CODE_CATEGORIES: dict[str, tuple[str | None, str]] = {
+    "C": ("commercial", "high"),
+    "CC": ("commercial", "high"),
+    "RC": ("mixed_use", "high"),
+    "IC": ("industrial", "high"),
+    "DMU": ("mixed_use", "high"),
+    "CMU": ("mixed_use", "high"),
+    "PUD": ("pud_flex", "medium"),
+    "GU": (None, "medium"),
+    "RSF": (None, "high"),
+    "RMF": (None, "high"),
+    "IPA": (None, "high"),
+}
+
 
 def _get(row: Any, key: str, default: Any = None) -> Any:
     if isinstance(row, dict):
@@ -125,6 +139,31 @@ def _category_decision(category: str | None, source: str, confidence: str) -> La
     return LandUseDecision(False, None, source, confidence)
 
 
+def parcel_zoning_land_use(parcel_row: Any) -> LandUseDecision | None:
+    """Return a parcel-specific zoning/FLU land-use signal when the data is clear.
+
+    Current use can explain why a parcel was ingested as a candidate, but Live
+    Local eligibility starts with the subject parcel's zoning/permitted use. This
+    helper is intentionally conservative: numeric/unknown zoning codes do not get
+    guessed into an eligible category.
+    """
+
+    for key in ("zoning_general_use", "flu_class", "zoning_map_zone"):
+        raw = _text(_get(parcel_row, key))
+        if not raw:
+            continue
+        category = _ZONING_CODE_CATEGORIES.get(raw)
+        if category:
+            return _category_decision(category[0], f"parcel zoning via {key}={raw}", category[1])
+
+    for key in ("zoning_map_description", "zoning_general_use", "flu_class", "zoning_code"):
+        decision = _decision_from_text(_text(_get(parcel_row, key)))
+        if decision:
+            return LandUseDecision(decision.eligible, decision.category, f"parcel zoning via {key}", decision.confidence)
+
+    return None
+
+
 def categorize_land_use(parcel_row: Any) -> LandUseDecision:
     """Return the v0 Live Local land category decision for a parcel row.
 
@@ -136,6 +175,10 @@ def categorize_land_use(parcel_row: Any) -> LandUseDecision:
     zoning_rescue = _bool(_get(parcel_row, "zoning_rescue"))
     bucket = _text(_get(parcel_row, "candidate_bucket")).lower()
     normalized_use = _text(_get(parcel_row, "normalized_use")).lower()
+    parcel_zoning = parcel_zoning_land_use(parcel_row)
+
+    if parcel_zoning and parcel_zoning.confidence == "high":
+        return parcel_zoning
 
     if zoning_rescue:
         for key in ("candidate_bucket", "normalized_use"):
@@ -150,6 +193,9 @@ def categorize_land_use(parcel_row: Any) -> LandUseDecision:
                 return LandUseDecision(True, decision.category, f"zoning rescue via {key}", "medium")
 
         return LandUseDecision(True, "zoning_rescue", "zoning_rescue=true", "medium")
+
+    if parcel_zoning:
+        return parcel_zoning
 
     if bucket in _BUCKET_CATEGORIES:
         category, confidence = _BUCKET_CATEGORIES[bucket]

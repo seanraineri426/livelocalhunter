@@ -339,6 +339,12 @@ def _data_gaps(parcel: dict[str, Any], zoning: list[dict[str, Any]], excluded: l
         gaps.append("normalized_folio_missing")
     if parcel.get("massing_flags"):
         gaps.extend(str(flag) for flag in parcel["massing_flags"] if str(flag).endswith("_missing"))
+        if "oversized_parcel_review_required" in parcel["massing_flags"]:
+            gaps.append("manual_site_boundary_required")
+        if "parcel_zoning_unmatched_review_required" in parcel["massing_flags"]:
+            gaps.append("parcel_zoning_unmatched_review_required")
+        if "parcel_zoning_qualification_unverified" in parcel["massing_flags"]:
+            gaps.append("parcel_zoning_qualification_unverified")
     if excluded and parcel.get("eligible") is True:
         gaps.append("eligible_but_intersects_excluded_area")
     return sorted(dict.fromkeys(gaps))
@@ -363,6 +369,16 @@ def _summary_sections(
         else "not computed"
     )
     flags = list(parcel.get("massing_flags") or [])
+    review_flags = {
+        "oversized_parcel_review_required",
+        "manual_site_boundary_required",
+        "parcel_zoning_unmatched_review_required",
+        "parcel_zoning_qualification_unverified",
+        "land_category_from_current_use_or_candidate_bucket",
+    }
+    review_required = parcel.get("eligible") is True and bool(review_flags.intersection(flags))
+    if review_required:
+        eligibility_state = "needs_review"
 
     return {
         "identity": (
@@ -381,6 +397,7 @@ def _summary_sections(
                 "confidence": land_use.confidence,
             },
             "excluded_area_intersections": len(excluded),
+            "review_required": review_required,
         },
         "massing": {
             "max_units": parcel.get("max_units"),
@@ -388,6 +405,7 @@ def _summary_sections(
             "max_height_stories": parcel.get("max_height_stories"),
             "required_parking": parcel.get("required_parking"),
             "inputs": parcel.get("massing_inputs") or {},
+            "review_required": review_required,
         },
         "flags": flags,
         "data_gaps": data_gaps,

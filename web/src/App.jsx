@@ -31,6 +31,22 @@ function formatAddress(parcel) {
   return [parcel.site_address, parcel.site_city, parcel.site_zip].filter(Boolean).join(', ')
 }
 
+function formatAcres(parcel) {
+  const acres = parcel?.acreage ?? (parcel?.lot_sf ? Number(parcel.lot_sf) / 43560 : null)
+  if (acres === null || acres === undefined || Number.isNaN(Number(acres))) return 'acreage n/a'
+  return `${Number(acres).toLocaleString(undefined, { maximumFractionDigits: 1 })} ac`
+}
+
+function reviewRequired(flags = []) {
+  return flags.some((flag) => [
+    'oversized_parcel_review_required',
+    'manual_site_boundary_required',
+    'parcel_zoning_unmatched_review_required',
+    'parcel_zoning_qualification_unverified',
+    'land_category_from_current_use_or_candidate_bucket',
+  ].includes(flag))
+}
+
 function App() {
   const [folio, setFolio] = useState('')
   const [county, setCounty] = useState('miami_dade')
@@ -228,6 +244,7 @@ function App() {
           <div className="results">
             {results.map((parcel) => {
               const address = formatAddress(parcel)
+              const needsReview = reviewRequired(parcel.massing_flags || [])
               return (
                 <button
                   className={parcel.parcel_id === selectedParcelId ? 'result selected' : 'result'}
@@ -236,7 +253,11 @@ function App() {
                 >
                   <strong>{parcel.source_parcel_id}</strong>
                   {address && <span>{address}</span>}
-                  <span>{parcel.county_fips} - {parcel.max_units || 'n/a'} max units - {parcel.eligible ? 'eligible' : 'review'}</span>
+                  <span>{formatAcres(parcel)} - {parcel.candidate_bucket || parcel.normalized_use || parcel.use_class || 'use n/a'}</span>
+                  <span>
+                    {parcel.county_fips} - {needsReview ? 'review massing' : `${parcel.max_units || 'n/a'} max units`} - {parcel.eligible && !needsReview ? 'eligible' : 'review'}
+                  </span>
+                  {parcel.zoning_code && <span>zoning {parcel.zoning_code}</span>}
                 </button>
               )
             })}
@@ -256,7 +277,13 @@ function App() {
                   <strong>{context.parcel?.source_parcel_id}</strong>
                 </div>
                 {formatAddress(context.parcel) && <p>{formatAddress(context.parcel)}</p>}
+                <p>{formatAcres(context.parcel)}</p>
               </div>
+              {context.summary?.eligibility?.review_required && (
+                <div className="warning">
+                  Review required before relying on massing: verify subject zoning and define a developable site boundary.
+                </div>
+              )}
               <div className="cards">
                 <div className="mini-card">
                   <span>Eligibility</span>
@@ -265,7 +292,7 @@ function App() {
                 </div>
                 <div className="mini-card">
                   <span>Massing</span>
-                  <strong>{context.entitlement?.max_units || 'n/a'} units</strong>
+                  <strong>{context.summary?.massing?.review_required ? 'Review required' : `${context.entitlement?.max_units || 'n/a'} units`}</strong>
                   <small>{context.entitlement?.max_height_stories || 'n/a'} stories</small>
                 </div>
                 <div className="mini-card">

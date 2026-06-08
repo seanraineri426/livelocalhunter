@@ -101,12 +101,17 @@ def search_parcels(
             p.site_city,
             p.site_zip,
             p.lot_sf,
+            p.acreage,
             p.zoning_code,
+            p.use_class,
             p.is_candidate,
             p.candidate_bucket,
+            p.candidate_reason,
+            p.normalized_use,
             e.eligible,
             e.max_units,
-            e.confidence
+            e.confidence,
+            e.massing_flags
         FROM lla.parcels p
         LEFT JOIN lla.entitlement e ON e.parcel_id = p.parcel_id
         WHERE {' AND '.join(where)}
